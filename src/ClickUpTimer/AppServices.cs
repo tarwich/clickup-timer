@@ -6,6 +6,7 @@ internal sealed class AppServices : IDisposable
     internal CredentialStore Credentials { get; }
     internal AppSettings Settings { get; private set; }
     internal event Action? Changed;
+    internal Func<string?>? ValidateAccountChange { get; set; }
     private CancellationTokenSource? refresh;
     internal string? CacheNotice { get; private set; }
     internal AppServices(SettingsStore? store = null, CredentialStore? credentials = null)
@@ -14,6 +15,11 @@ internal sealed class AppServices : IDisposable
     internal void Save(AppSettings next, string? replacementKey = null)
     {
         var oldKey = replacementKey is not null ? Credentials.Read() : null;
+        if (next.UserId != Settings.UserId || next.WorkspaceId != Settings.WorkspaceId || (replacementKey is not null && replacementKey != oldKey))
+        {
+            var problem = ValidateAccountChange?.Invoke();
+            if (problem is not null) throw new ClickUpException(problem);
+        }
         var oldStartup = StartupRegistration.Read();
         try
         {

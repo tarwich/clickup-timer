@@ -9,7 +9,7 @@ internal sealed class TaskPickerPanel : StackPanel
 {
     private readonly AppServices services;
     private readonly Func<TaskSummary?> active;
-    private readonly Action<TaskSummary> select;
+    private readonly Func<TaskSummary, Task> select;
     private readonly Func<ClickUpClient> createClient;
     private readonly TextBox query = new() { Height = 32, Padding = new Thickness(6), MaxLength = 500 };
     private readonly ListBox results = new() { DisplayMemberPath = "Label", MaxHeight = 250, MinHeight = 65 };
@@ -21,7 +21,7 @@ internal sealed class TaskPickerPanel : StackPanel
     private string? scope;
     private string searchStatus = "";
     private bool creating;
-    internal TaskPickerPanel(AppServices services, Func<TaskSummary?> active, Action<TaskSummary> select, Action openTask, Func<ClickUpClient>? createClient = null)
+    internal TaskPickerPanel(AppServices services, Func<TaskSummary?> active, Func<TaskSummary, Task> select, Action openTask, Func<ClickUpClient>? createClient = null)
     {
         this.services = services; this.active = active; this.select = select;
         this.createClient = createClient ?? (() => new(services.Credentials.Read() ?? throw new ClickUpException("Connect an API key in Settings first.")));
@@ -45,10 +45,10 @@ internal sealed class TaskPickerPanel : StackPanel
         refresh.Click += async (_, _) => { refresh.IsEnabled = false; await services.RefreshCache(); refresh.IsEnabled = true; Refresh(); };
         Children.Add(refresh);
     }
-    private void Choose()
+    private async void Choose()
     {
         if (creating || results.SelectedItem is not TaskRow row) return;
-        try { services.Save(services.Settings with { RecentTasks = TaskCatalog.Remember(services.Settings, row.Task) }); select(row.Task); }
+        try { services.Save(services.Settings with { RecentTasks = TaskCatalog.Remember(services.Settings, row.Task) }); await select(row.Task); }
         catch (Exception) { notice.Text = "Could not save recent tasks. Try again."; }
     }
     internal void Open()
@@ -108,7 +108,7 @@ internal sealed class TaskPickerPanel : StackPanel
             if (services.Settings.UserId != settings.UserId || services.Settings.WorkspaceId != settings.WorkspaceId || services.Settings.PreferredListId != settings.PreferredListId)
             { notice.Text = "Task created in the original preferred list. Your setup changed; select it from that list."; return; }
             services.Save(services.Settings with { RecentTasks = TaskCatalog.Remember(services.Settings, created) });
-            select(created); query.Clear(); _ = services.RefreshCache();
+            await select(created); query.Clear(); _ = services.RefreshCache();
         }
         catch (Exception ex)
         {

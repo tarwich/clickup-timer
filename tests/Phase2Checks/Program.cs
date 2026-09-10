@@ -3,6 +3,17 @@ using System.IO;
 using System.Net.Http;
 using ClickUpTimer;
 
+if (args.Contains("--live-read"))
+{
+    using var services = new AppServices();
+    using var api = new ClickUpClient(services.Credentials.Read() ?? throw new Exception("No saved key"));
+    if (await api.User() != services.Settings.UserId) throw new Exception("Saved account identity differs");
+    var current = await api.Current(services.Settings.WorkspaceId!);
+    var history = await api.Entries(services.Settings.WorkspaceId!, 0, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+    Console.WriteLine($"Read-only timing check passed. Running: {current?.Running == true}; personal time entries parsed: {history.Count}.");
+    return;
+}
+
 var checks = 0;
 void Check(bool condition, string name) { if (!condition) throw new Exception(name); checks++; Console.WriteLine("PASS " + name); }
 var requests = new List<string>();
@@ -78,20 +89,7 @@ try
 finally { vault.Delete(); }
 Check(vault.Read() is null, "Only the isolated test credential is removed");
 await SettingsFlowChecks.Run(Check);
-var timer = new TimerCoordinator();
-timer.Toggle();
-Check(!timer.IsRunning, "Preview cannot start without a selected task");
-timer.Select(new("one", "First task", "open")); timer.Toggle();
-await Task.Delay(1100);
-timer.Toggle();
-var stopped = timer.Elapsed;
-Check(!timer.IsRunning && stopped != "00:00:00", "Stop retains completed session duration");
-await Task.Delay(100);
-Check(timer.Elapsed == stopped, "Stopped duration remains fixed");
-timer.Toggle();
-Check(timer.IsRunning && timer.Elapsed == "00:00:00", "Next Start resets the session duration");
-timer.Select(new("two", "Second task", "open"));
-Check(!timer.IsRunning && timer.Elapsed == "00:00:00" && timer.SelectedTask?.Id == "two", "Selecting another task resets and stops local preview");
+await TimingChecks.Run(Check);
 await Phase4Checks.Run(Check);
 Console.WriteLine($"{checks} application checks passed.");
 

@@ -60,6 +60,12 @@ internal sealed class SettingsStore
     }
     internal void Save(AppSettings settings) { Write("settings.json", settings); Warning = null; }
     internal void SaveCache(TaskCache cache) => Write("task-cache.json", cache);
+    internal TimingState LoadTiming()
+    {
+        var path = Path.Combine(directory, "timer-state.json");
+        return File.Exists(path) ? JsonSerializer.Deserialize<TimingState>(File.ReadAllText(path)) ?? throw new JsonException() : new();
+    }
+    internal void SaveTiming(TimingState state) => Write("timer-state.json", state);
     internal TaskCache? LoadCache(string user, string workspace, string list)
     {
         try
@@ -76,7 +82,11 @@ internal sealed class SettingsStore
         Directory.CreateDirectory(directory);
         var path = Path.Combine(directory, name);
         var temp = path + ".tmp";
-        File.WriteAllText(temp, JsonSerializer.Serialize(value, new JsonSerializerOptions { WriteIndented = true }));
+        using (var stream = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
+        {
+            JsonSerializer.Serialize(stream, value, new JsonSerializerOptions { WriteIndented = true });
+            stream.Flush(true);
+        }
         File.Move(temp, path, true);
     }
 }

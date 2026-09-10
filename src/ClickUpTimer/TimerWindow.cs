@@ -6,19 +6,23 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Forms = System.Windows.Forms;
+using Microsoft.Win32;
 
 namespace ClickUpTimer;
 
 internal sealed class TimerWindow : Window
 {
     private readonly AppServices services;
-    private readonly TimerCoordinator timer = new();
+    private readonly TimerCoordinator timer;
+    private readonly TextBlock today = new() { FontSize = 10, Foreground = Brushes.LightGray };
+    private readonly DispatcherTimer reconcile = new() { Interval = TimeSpan.FromSeconds(15) };
+    private bool quitting, mayClose;
     private readonly WindowPositioner positioning;
     private readonly Forms.NotifyIcon tray;
     private readonly DispatcherTimer pulse = new() { Interval = TimeSpan.FromMilliseconds(200) };
     private readonly TextBlock elapsed = new() { Text = "00:00:00", FontFamily = new FontFamily("Consolas"), FontSize = 23, VerticalAlignment = VerticalAlignment.Center };
-    private readonly TextBlock status = new() { Text = "Demo · stopped", FontSize = 11 };
-    private readonly Button toggle = new() { Content = "▶", ToolTip = "Start demo timer (no ClickUp logging)", Width = 34 };
+    private readonly TextBlock status = new() { Text = "Connecting…", FontSize = 11 };
+    private readonly Button toggle = new() { Content = "▶", ToolTip = "Start logging to ClickUp", Width = 34 };
     private readonly TextBlock taskName = new() { Text = "Choose task ▴", FontSize = 11, TextTrimming = TextTrimming.CharacterEllipsis };
     private readonly Popup picker = new() { StaysOpen = false, AllowsTransparency = true, Placement = PlacementMode.Top };
     private readonly TaskPickerPanel pickerPanel;
@@ -28,6 +32,7 @@ internal sealed class TimerWindow : Window
     internal TimerWindow(AppServices services, bool inspect, bool openSettings = false)
     {
         this.services = services;
+        timer = new(services);
         Title = "ClickUp Timer"; WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize;
         ShowInTaskbar = inspect; ShowActivated = false; Topmost = true; Width = 336; Height = 40; Left = -10000; Top = -10000;
         Background = new SolidColorBrush(Color.FromRgb(27, 32, 39)); Foreground = Brushes.White;
@@ -55,16 +60,22 @@ internal sealed class TimerWindow : Window
         var times = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         elapsed.FontSize = 21;
         times.Children.Add(elapsed);
-        times.Children.Add(new TextBlock { Text = "Today: —", FontSize = 10, Foreground = Brushes.LightGray, ToolTip = "Personal ClickUp total will be available when time tracking is connected in Phase 5." });
+        times.Children.Add(today);
         Add(times, 2);
-        StyleButton(toggle); toggle.Click += (_, _) => { timer.Toggle(); UpdateTimer(); }; Add(toggle, 3);
+        StyleButton(toggle); toggle.Click += async (_, _) => { if (timer.IsRunning || timer.HasPending) await timer.Stop(); else await timer.Start(); }; Add(toggle, 3);
         var options = new Button { Content = "⚙", ToolTip = "Settings", Width = 28 }; StyleButton(options); options.Click += (_, _) => OpenSettings(); Add(options, 4);
         Content = new Border { BorderBrush = new SolidColorBrush(Color.FromRgb(68, 91, 102)), BorderThickness = new Thickness(1), Child = panel };
         var menu = new ContextMenu();
         void Item(string name, Action action) { var item = new MenuItem { Header = name }; item.Click += (_, _) => action(); menu.Items.Add(item); }
         Item("Choose task", OpenPicker); Item("Open task in ClickUp", OpenTask);
+        Item("Retry ClickUp connection", () => _ = timer.Refresh());
+        Item("Accept ClickUp state…", async () =>
+        {
+            if (MessageBox.Show(timer.ReviewText, "Review timer recovery", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes)
+                await timer.AcceptRemote();
+        });
         Item("Settings", OpenSettings); Item("Reset position", positioning.Reset); Item("Save positioning diagnostics", positioning.SaveDiagnostics); Item("Exit", Close);
-        pickerPanel = new TaskPickerPanel(services, () => timer.SelectedTask, task => { timer.Select(task); picker.IsOpen = false; UpdateTimer(); }, OpenTask);
+        pickerPanel = new TaskPickerPanel(services, () => timer.SelectedTask, async task => { await timer.Select(task); if (timer.SelectedTask?.Id == task.Id) picker.IsOpen = false; UpdateTimer(); }, OpenTask);
         picker.Child = new Border { Width = 440, Background = Brushes.White, BorderBrush = Brushes.SlateGray, BorderThickness = new Thickness(1), Child = pickerPanel };
         picker.Closed += (_, _) => pickerPanel.Cancel();
         picker.PlacementTarget = choose;
@@ -74,10 +85,24 @@ internal sealed class TimerWindow : Window
         trayMenu.Items.Add("Reset position", null, (_, _) => Dispatcher.Invoke(positioning.Reset));
         trayMenu.Items.Add("Exit", null, (_, _) => Dispatcher.Invoke(Close));
         tray.ContextMenuStrip = trayMenu; tray.DoubleClick += (_, _) => Dispatcher.Invoke(OpenSettings);
-        pulse.Tick += (_, _) => elapsed.Text = timer.Elapsed; pulse.Start();
+        pulse.Tick += (_, _) => { elapsed.Text = timer.Elapsed; today.Text = "Today: " + timer.Today; }; pulse.Start();
+        timer.Changed += UpdateTimer;
+        reconcile.Tick += async (_, _) => await timer.Refresh(); reconcile.Start();
+        SystemEvents.SessionSwitch += SessionSwitch;
+        SystemEvents.PowerModeChanged += PowerChanged;
         services.Changed += UpdateSummary; UpdateSummary();
-        Loaded += (_, _) => { if (openSettings || !services.Settings.IsConfigured) Dispatcher.BeginInvoke(OpenSettings); if (services.Settings.IsConfigured) _ = services.RefreshCache(); };
-        Closed += (_, _) => { picker.IsOpen = false; settingsWindow?.Close(); positioning.Dispose(); pulse.Stop(); tray.Dispose(); services.Changed -= UpdateSummary; services.Dispose(); };
+        Loaded += async (_, _) => { if (openSettings || !services.Settings.IsConfigured) _ = Dispatcher.BeginInvoke(OpenSettings); if (services.Settings.IsConfigured) _ = services.RefreshCache(); await timer.Refresh(); };
+        Closing += async (_, e) =>
+        {
+            if (mayClose) return;
+            e.Cancel = true;
+            if (quitting) return;
+            quitting = true; reconcile.Stop();
+            await timer.Stop();
+            if (!timer.StopRequestDurable) { quitting = false; reconcile.Start(); Notice(timer.Message ?? "Stop request could not be saved."); return; }
+            mayClose = true; Close();
+        };
+        Closed += (_, _) => { SystemEvents.SessionSwitch -= SessionSwitch; SystemEvents.PowerModeChanged -= PowerChanged; timer.Changed -= UpdateTimer; reconcile.Stop(); picker.IsOpen = false; settingsWindow?.Close(); positioning.Dispose(); pulse.Stop(); tray.Dispose(); services.Changed -= UpdateSummary; services.Dispose(); };
     }
     private static void StyleButton(Button b)
     {
@@ -88,24 +113,33 @@ internal sealed class TimerWindow : Window
     {
         taskName.Text = timer.SelectedTask?.Name ?? "Choose task ▴";
         taskName.ToolTip = timer.SelectedTask?.Name ?? "Choose a task from your preferred list";
-        status.Text = timer.IsRunning ? "▶ Preview running" : "■ Preview stopped";
+        status.Text = timer.StatusText;
         status.FontSize = 10;
-        status.Foreground = timer.IsRunning ? new SolidColorBrush(Color.FromRgb(102, 235, 181)) : Brushes.LightGray;
-        toggle.Content = timer.IsRunning ? "■" : "▶";
-        toggle.IsEnabled = timer.SelectedTask is not null;
-        toggle.ToolTip = timer.IsRunning ? "Stop local preview — no time is logged to ClickUp" : "Start a new local preview session — no time is logged to ClickUp";
+        status.Foreground = timer.HasPending || !timer.Online || timer.NeedsReview ? Brushes.Orange : timer.IsRunning ? new SolidColorBrush(Color.FromRgb(102, 235, 181)) : Brushes.LightGray;
+        toggle.Content = timer.IsRunning || timer.HasPending ? "■" : "▶";
+        toggle.IsEnabled = timer.CanRequestStop || (!timer.Busy && (timer.SelectedTask is not null || timer.HasPending || timer.IsRunning));
+        toggle.ToolTip = timer.IsRunning || timer.HasPending ? "Stop logging to ClickUp" : "Start logging to ClickUp";
+        ToolTip = timer.Message ?? "Time is logged directly to ClickUp. Today is your personal task total in the Windows local timezone.";
+        today.Text = "Today: " + timer.Today;
         elapsed.Text = timer.Elapsed;
     }
     private void UpdateSummary()
     {
-        var scope = services.Settings.UserId + "/" + services.Settings.WorkspaceId + "/" + services.Settings.PreferredListId;
-        if (scope != taskScope) { timer.Select(null); taskScope = scope; }
+        var scope = services.Settings.UserId + "/" + services.Settings.WorkspaceId;
+        if (scope != taskScope) { taskScope = scope; _ = timer.Refresh(); }
         UpdateTimer();
-        ToolTip = services.Settings.IsConfigured
-        ? $"Preferred list: {services.Settings.PreferredListName}\n{services.CacheNotice ?? "Demo timer — time is not logged yet."}"
-        : "Open Settings to connect your ClickUp account. Demo timer — time is not logged yet.";
         if (picker.IsOpen) LoadPicker();
     }
+    private void SessionSwitch(object sender, SessionSwitchEventArgs e) => Dispatcher.Invoke(() =>
+    {
+        if (e.Reason == SessionSwitchReason.SessionLock) { timer.RequestPause(); _ = timer.Stop(); }
+        else if (e.Reason == SessionSwitchReason.SessionUnlock) _ = timer.Refresh();
+    });
+    private void PowerChanged(object sender, PowerModeChangedEventArgs e) => Dispatcher.Invoke(() =>
+    {
+        if (e.Mode == PowerModes.Suspend) { timer.RequestPause(); _ = timer.Stop(); }
+        else if (e.Mode == PowerModes.Resume) _ = timer.Refresh();
+    });
     private void OpenPicker() { Activate(); picker.IsOpen = true; pickerPanel.Open(); }
     private void LoadPicker() => pickerPanel.Refresh();
     private void OpenTask()
@@ -115,6 +149,7 @@ internal sealed class TimerWindow : Window
         catch (Exception) { Notice("The task could not be opened in your browser."); }
     }
     private void Notice(string message) => tray.ShowBalloonTip(4000, "ClickUp Timer", message, Forms.ToolTipIcon.Info);
+    internal void RequestShutdownStop() { timer.RequestPause(); _ = timer.Stop(); }
     internal void OpenSettings()
     {
         if (settingsWindow is not null) { settingsWindow.Activate(); return; }

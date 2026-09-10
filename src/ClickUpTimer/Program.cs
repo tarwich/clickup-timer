@@ -20,6 +20,7 @@ internal static class Program
         if (!first) { showSettings.Set(); return; }
         var app = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
         var window = new TimerWindow(new AppServices(), args.Contains("--inspect"), args.Contains("--settings"));
+        app.SessionEnding += (_, _) => window.RequestShutdownStop();
         var registration = ThreadPool.RegisterWaitForSingleObject(showSettings, (_, _) => app.Dispatcher.BeginInvoke(window.OpenSettings), null, Timeout.Infinite, false);
         try { app.Run(window); } finally { registration.Unregister(null); }
     }

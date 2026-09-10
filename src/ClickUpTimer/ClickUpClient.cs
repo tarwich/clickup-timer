@@ -6,9 +6,10 @@ namespace ClickUpTimer;
 
 internal sealed record Choice(string Id, string Name) { public override string ToString() => Name; }
 internal sealed record ClickUpUser(string Id, string Name);
-internal sealed class ClickUpException(string message) : Exception(message);
+internal sealed class ClickUpException(string message, bool rateLimited = false) : Exception(message)
+{ internal bool RateLimited { get; } = rateLimited; }
 
-internal sealed class ClickUpClient : IDisposable
+internal sealed class ClickUpClient : IDisposable, ITimingApi
 {
     private readonly HttpClient http;
     private readonly string token;
@@ -20,11 +21,11 @@ internal sealed class ClickUpClient : IDisposable
         http.BaseAddress = new Uri("https://api.clickup.com/api/v2/");
         http.Timeout = TimeSpan.FromSeconds(25);
     }
-    private async Task<JsonDocument> Get(string path, CancellationToken cancellation, object? body = null)
+    private async Task<JsonDocument> Get(string path, CancellationToken cancellation, object? body = null, HttpMethod? method = null)
     {
         try
         {
-            using var request = new HttpRequestMessage(body is null ? HttpMethod.Get : HttpMethod.Post, path);
+            using var request = new HttpRequestMessage(method ?? (body is null ? HttpMethod.Get : HttpMethod.Post), path);
             if (body is not null) request.Content = new StringContent(JsonSerializer.Serialize(body), System.Text.Encoding.UTF8, "application/json");
             request.Headers.Add("Authorization", token);
             using var response = await http.SendAsync(request, cancellation);
@@ -36,7 +37,7 @@ internal sealed class ClickUpClient : IDisposable
                     HttpStatusCode.NotFound => "This ClickUp location is no longer available. Select another list.",
                     HttpStatusCode.TooManyRequests => "ClickUp's request limit was reached. Wait a minute, then try again.",
                     _ => "ClickUp could not complete the request. Try again shortly."
-                });
+                }, response.StatusCode == HttpStatusCode.TooManyRequests);
             return JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellation));
         }
         catch (HttpRequestException) { throw new ClickUpException("Cannot reach ClickUp. Check your internet connection and try again."); }
@@ -133,4 +134,51 @@ internal sealed class ClickUpClient : IDisposable
         return ParseTask(json.RootElement, list);
     }
     public void Dispose() => http.Dispose();
+    public async Task<string> User() => (await Validate(default)).Id;
+    private static TimeEntry ReadEntry(JsonElement data)
+    {
+        static long Number(JsonElement obj, string key) => obj.TryGetProperty(key, out var value) && long.TryParse(value.ToString(), out var result) ? result : 0;
+        TaskSummary? task = null;
+        if (data.TryGetProperty("task", out var t) && t.ValueKind == JsonValueKind.Object)
+            task = new(Id(t), Name(t), "", data.TryGetProperty("task_location", out var location) && location.TryGetProperty("list_id", out var list) ? list.ToString() : null);
+        return new(Id(data), data.GetProperty("user").GetProperty("id").ToString(), task,
+            Number(data, "start"), Number(data, "duration"), Number(data, "end"),
+            data.TryGetProperty("description", out var description) ? description.GetString() ?? "" : "");
+    }
+    public async Task<TimeEntry?> Current(string workspace)
+    {
+        using var json = await Get($"team/{Segment(workspace)}/time_entries/current", default);
+        var data = json.RootElement.GetProperty("data");
+        return data.ValueKind == JsonValueKind.Object && data.TryGetProperty("id", out _) ? ReadEntry(data) : null;
+    }
+    public async Task<TimeEntry> Entry(string workspace, string id)
+    {
+        using var json = await Get($"team/{Segment(workspace)}/time_entries/{Segment(id)}", default);
+        return ReadEntry(json.RootElement.GetProperty("data"));
+    }
+    public async Task Start(string workspace, string task, string marker)
+    {
+        using var json = await Get($"team/{Segment(workspace)}/time_entries/start", default, new { tid = task, description = marker });
+    }
+    public async Task Finish(string workspace, TimeEntry entry, long end)
+    {
+        // Correct the stopped entry's cutoff without changing another running timer.
+        using var json = await Get($"team/{Segment(workspace)}/time_entries/{Segment(entry.Id)}", default,
+            new { start = entry.Start, end, duration = Math.Max(0, end - entry.Start), tags = Array.Empty<object>(), tag_action = "add" }, HttpMethod.Put);
+    }
+    public async Task<bool> StopCurrent(string workspace, string expectedId)
+    {
+        var current = await Current(workspace);
+        if (current?.Id != expectedId) return false;
+        using var json = await Get($"team/{Segment(workspace)}/time_entries/stop", default, new { });
+        var stopped = json.RootElement.GetProperty("data");
+        if (stopped.ValueKind != JsonValueKind.Object || Id(stopped) != expectedId)
+            throw new ClickUpException("ClickUp changed timers during Stop. Refresh to check its current state.");
+        return true;
+    }
+    public async Task<List<TimeEntry>> Entries(string workspace, long start, long end)
+    {
+        using var json = await Get($"team/{Segment(workspace)}/time_entries?start_date={start}&end_date={end}", default);
+        return json.RootElement.GetProperty("data").EnumerateArray().Select(ReadEntry).ToList();
+    }
 }

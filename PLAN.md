@@ -45,8 +45,8 @@ Acceptance: setup succeeds with a valid key, reports invalid credentials clearly
 ## Phase 3 — Timer display and controls
 
 - [x] Display the selected task name and a large `HH:MM:SS` current-session timer.
-- [ ] Display a smaller personal total for the selected task today.
-- [ ] Show explicit running/stopped text and icons alongside color; distinguish unconfirmed operations and connection failures.
+- [x] Display a smaller personal total for the selected task today.
+- [x] Show explicit running/stopped text and icons alongside color; distinguish unconfirmed operations and connection failures.
 - [x] Provide Start/Stop, task picker, settings, and an open-in-ClickUp action.
 - [x] Open the task picker upward from taskbar mode.
 - [x] Retain the completed session duration after Stop until the next Start or task selection.
@@ -71,25 +71,32 @@ Phase 3 progress: installed a local preview with cached-task selection, explicit
 
 Acceptance: the user can quickly return to recent tasks, search the preferred list before expanding the scope, exclude unwanted statuses, and create a task in the configured list.
 
-Phase 4 implemented: eight saved recent tasks, local-first filtering, explicit progressive workspace search, list-specific ignored statuses, and unassigned task creation using the entered search text. Verified local and workspace search and status discovery live. Creation requests and failure/duplicate-click behavior use fixtures; no live test tasks were created. All 77 application checks pass. Timing remains a local preview until Phase 5.
+User confirmed live task creation works. Phase 4 implemented: eight saved recent tasks, local-first filtering, explicit progressive workspace search, list-specific ignored statuses, and unassigned task creation using the entered search text. Verified local and workspace search and status discovery live. Creation requests and failure/duplicate-click behavior use fixtures; no live test tasks were created. All 77 application checks pass. Timing remains a local preview until Phase 5.
 
 ## Phase 5 — ClickUp timing and recovery
 
-- [ ] Start and stop time entries directly through ClickUp's API.
-- [ ] When switching while running, stop the old task before starting the new one. Switching while stopped stays stopped.
-- [ ] Stop on screen lock, sleep, or explicit Quit; require manual Start when the user returns.
-- [ ] Require connectivity to start, switch, or create tasks.
-- [ ] Serialize timer operations and prevent duplicate clicks.
-- [ ] Reconcile uncertain API responses before retrying writes.
-- [ ] Read ClickUp's running entry on startup, resume, before changes, and every 15 seconds; reflect changes made in ClickUp itself.
-- [ ] Update elapsed time each second from timestamps rather than accumulated UI ticks.
-- [ ] Calculate today's personal task total in the Windows local timezone without double-counting the running entry.
-- [ ] Persist requested stop timestamps before network calls.
-- [ ] Clearly mark unsuccessful stops as unconfirmed and reconcile the specific entry on reconnection.
-- [ ] Correct delayed stops to their recorded stop time where possible, never stop an unrelated replacement timer, and surface conflicting external edits for review.
-- [ ] Preserve recoverable state across crashes and respect API rate limits.
+- [x] Start and stop time entries directly through ClickUp's API.
+- [x] When switching while running, stop the old task before starting the new one. Switching while stopped stays stopped.
+- [x] Stop on screen lock, sleep, or explicit Quit; require manual Start when the user returns.
+- [x] Require connectivity to start, switch, or create tasks.
+- [x] Serialize timer operations and prevent duplicate clicks.
+- [x] Reconcile uncertain API responses before retrying writes.
+- [x] Read ClickUp's running entry on startup, resume, before changes, and every 15 seconds; reflect changes made in ClickUp itself.
+- [x] Update elapsed time each second from timestamps rather than accumulated UI ticks.
+- [x] Calculate today's personal task total in the Windows local timezone without double-counting the running entry.
+- [x] Persist requested stop timestamps before network calls.
+- [x] Clearly mark unsuccessful stops as unconfirmed and reconcile the specific entry on reconnection.
+- [x] Correct delayed stops to their recorded stop time where possible, never stop an unrelated replacement timer, and surface conflicting external edits for review.
+- [x] Preserve recoverable state across crashes and respect API rate limits.
 
 Acceptance: successful operations match ClickUp, task transfers do not overlap, and network failures remain visible and recoverable. Unexpected power loss cannot guarantee an immediate server-side stop.
+
+Phase 5 implementation: server-backed entries, durable start/stop intent, entry-specific stop updates, serialized changes, 15-second reconciliation, local-day totals, and lock/sleep/quit cutoff capture. All 96 application checks pass, including uncertain responses, restart recovery, conflicting replacement timers, rapid clicks, and DST boundaries. Live read-only authentication/current-entry/history requests passed. Live Start/Stop and actual lock/sleep validation remain Phase 6 checks; no test time was written to the user's tasks. ClickUp provides no conditional-write transaction, so concurrent external edits between a read and write cannot be made atomic.
+
+- [x] Fix external-stop reconciliation: accept the server duration, clear stale pending stops, and use the dedicated Stop endpoint after checking the expected running entry. All 98 application checks pass.
+- [x] Reproduce and fix live Stop failure caused by missing task metadata on the singular-entry endpoint. Verify actual UI Start and Stop against the server, and keep Stop available while syncing. All 99 checks pass.
+- [x] Final live UI verification passed twice: Start then Stop on Blah recorded 21.897 seconds and 11.637 seconds. Both sessions were confirmed stopped via the server, with matching local duration and no pending operation.
+- [x] User confirmed Start and Stop work correctly; reviewed for commit.
 
 ## Phase 6 — Verification and delivery
 
@@ -101,7 +108,7 @@ Acceptance: successful operations match ClickUp, task transfers do not overlap, 
 - [ ] Repeat visibility acceptance checks with the completed UI in taskbar and floating modes.
 - [ ] Package a self-contained Windows build matching this PC's architecture.
 - [ ] Write setup and usage instructions, including credential entry and known visibility/recovery limits.
-- [ ] Complete a live smoke test after the user enters their key in the app: select/create a task, log a short session, and verify the entry in ClickUp.
+- [x] Complete a live smoke test after the user enters their key in the app: select/create a task, log a short session, and verify the entry in ClickUp.
 - [ ] Deliver the executable, source, and setup instructions.
 
 ## References
@@ -116,5 +123,3 @@ Acceptance: successful operations match ClickUp, task transfers do not overlap, 
 - [Get running time entry](https://developer.clickup.com/reference/getrunningtimeentry)
 - [Update a time entry](https://developer.clickup.com/reference/updateatimeentry)
 - [Get time entries within a date range](https://developer.clickup.com/reference/gettimeentrieswithinadaterange)
-
-- [x] Fix preferred-list refresh overwriting the current selection. Preserve saved and in-progress selections, retain missing selections with an explanation, and pass all 56 Phase 2 checks.
