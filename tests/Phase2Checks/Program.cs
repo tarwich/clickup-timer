@@ -78,6 +78,20 @@ try
 finally { vault.Delete(); }
 Check(vault.Read() is null, "Only the isolated test credential is removed");
 await SettingsFlowChecks.Run(Check);
+var timer = new TimerCoordinator();
+timer.Toggle();
+Check(!timer.IsRunning, "Preview cannot start without a selected task");
+timer.Select(new("one", "First task", "open")); timer.Toggle();
+await Task.Delay(1100);
+timer.Toggle();
+var stopped = timer.Elapsed;
+Check(!timer.IsRunning && stopped != "00:00:00", "Stop retains completed session duration");
+await Task.Delay(100);
+Check(timer.Elapsed == stopped, "Stopped duration remains fixed");
+timer.Toggle();
+Check(timer.IsRunning && timer.Elapsed == "00:00:00", "Next Start resets the session duration");
+timer.Select(new("two", "Second task", "open"));
+Check(!timer.IsRunning && timer.Elapsed == "00:00:00" && timer.SelectedTask?.Id == "two", "Selecting another task resets and stops local preview");
 Console.WriteLine($"{checks} Phase 2 checks passed.");
 
 sealed class FixtureHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler

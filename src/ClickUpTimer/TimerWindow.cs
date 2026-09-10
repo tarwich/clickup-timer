@@ -1,5 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Diagnostics;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -17,6 +19,11 @@ internal sealed class TimerWindow : Window
     private readonly TextBlock elapsed = new() { Text = "00:00:00", FontFamily = new FontFamily("Consolas"), FontSize = 23, VerticalAlignment = VerticalAlignment.Center };
     private readonly TextBlock status = new() { Text = "Demo · stopped", FontSize = 11 };
     private readonly Button toggle = new() { Content = "▶", ToolTip = "Start demo timer (no ClickUp logging)", Width = 34 };
+    private readonly TextBlock taskName = new() { Text = "Choose task ▴", FontSize = 11, TextTrimming = TextTrimming.CharacterEllipsis };
+    private readonly Popup picker = new() { StaysOpen = false, AllowsTransparency = true, Placement = PlacementMode.Top };
+    private readonly ListBox taskList = new() { DisplayMemberPath = "Name", MaxHeight = 280, MinHeight = 60 };
+    private readonly TextBlock pickerNotice = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 8) };
+    private string? taskScope;
     private SettingsWindow? settingsWindow;
 
     internal TimerWindow(AppServices services, bool inspect, bool openSettings = false)
@@ -42,14 +49,39 @@ internal sealed class TimerWindow : Window
         grip.MouseLeftButtonUp += (_, _) => { positioning.EndDrag(); grip.ReleaseMouseCapture(); };
         grip.LostMouseCapture += (_, _) => positioning.EndDrag(); Add(grip, 0);
         var labels = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        labels.Children.Add(new TextBlock { Text = "CLICKUP TIMER", FontSize = 10, FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(Color.FromRgb(155, 171, 190)) });
-        labels.Children.Add(status); Add(labels, 1); Add(elapsed, 2);
+        labels.Children.Add(taskName);
+        labels.Children.Add(status);
+        var choose = new Button { Content = labels, Background = Brushes.Transparent, Foreground = Brushes.White, BorderThickness = new Thickness(0), HorizontalContentAlignment = HorizontalAlignment.Stretch, Cursor = Cursors.Hand, ToolTip = "Choose a task" };
+        choose.Click += (_, _) => OpenPicker(); Add(choose, 1);
+        var times = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        elapsed.FontSize = 21;
+        times.Children.Add(elapsed);
+        times.Children.Add(new TextBlock { Text = "Today: —", FontSize = 10, Foreground = Brushes.LightGray, ToolTip = "Personal ClickUp total will be available when time tracking is connected in Phase 5." });
+        Add(times, 2);
         StyleButton(toggle); toggle.Click += (_, _) => { timer.Toggle(); UpdateTimer(); }; Add(toggle, 3);
         var options = new Button { Content = "⚙", ToolTip = "Settings", Width = 28 }; StyleButton(options); options.Click += (_, _) => OpenSettings(); Add(options, 4);
         Content = new Border { BorderBrush = new SolidColorBrush(Color.FromRgb(68, 91, 102)), BorderThickness = new Thickness(1), Child = panel };
         var menu = new ContextMenu();
         void Item(string name, Action action) { var item = new MenuItem { Header = name }; item.Click += (_, _) => action(); menu.Items.Add(item); }
+        Item("Choose task", OpenPicker); Item("Open task in ClickUp", OpenTask);
         Item("Settings", OpenSettings); Item("Reset position", positioning.Reset); Item("Save positioning diagnostics", positioning.SaveDiagnostics); Item("Exit", Close);
+        var pickerPanel = new StackPanel { Margin = new Thickness(14) };
+        pickerPanel.SetValue(TextBlock.ForegroundProperty, Brushes.Black);
+        pickerPanel.Children.Add(new TextBlock { Text = "Choose a task", FontSize = 18, FontWeight = FontWeights.SemiBold });
+        pickerPanel.Children.Add(pickerNotice); pickerPanel.Children.Add(taskList);
+        var pick = new Button { Content = "Use selected task", Height = 32, Margin = new Thickness(0, 8, 0, 0) };
+        void SelectTask() { if (taskList.SelectedItem is TaskSummary task) { timer.Select(task); picker.IsOpen = false; UpdateTimer(); } }
+        pick.Click += (_, _) => SelectTask();
+        taskList.MouseDoubleClick += (_, _) => SelectTask();
+        taskList.KeyDown += (_, e) => { if (e.Key == Key.Enter) { SelectTask(); e.Handled = true; } };
+        pickerPanel.Children.Add(pick);
+        var openTask = new Button { Content = "Open current task in ClickUp", Height = 30, Margin = new Thickness(0, 6, 0, 0) };
+        openTask.Click += (_, _) => OpenTask(); pickerPanel.Children.Add(openTask);
+        var refreshTasks = new Button { Content = "Refresh preferred-list tasks", Height = 30, Margin = new Thickness(0, 6, 0, 0) };
+        refreshTasks.Click += async (_, _) => { refreshTasks.IsEnabled = false; pickerNotice.Text = "Refreshing tasks…"; await services.RefreshCache(); refreshTasks.IsEnabled = true; LoadPicker(); };
+        pickerPanel.Children.Add(refreshTasks);
+        picker.Child = new Border { Width = 360, Background = Brushes.White, BorderBrush = Brushes.SlateGray, BorderThickness = new Thickness(1), Child = pickerPanel };
+        picker.PlacementTarget = choose;
         ContextMenu = menu;
         var trayMenu = new Forms.ContextMenuStrip();
         trayMenu.Items.Add("Settings", null, (_, _) => Dispatcher.Invoke(OpenSettings));
@@ -59,7 +91,7 @@ internal sealed class TimerWindow : Window
         pulse.Tick += (_, _) => elapsed.Text = timer.Elapsed; pulse.Start();
         services.Changed += UpdateSummary; UpdateSummary();
         Loaded += (_, _) => { if (openSettings || !services.Settings.IsConfigured) Dispatcher.BeginInvoke(OpenSettings); };
-        Closed += (_, _) => { settingsWindow?.Close(); positioning.Dispose(); pulse.Stop(); tray.Dispose(); services.Changed -= UpdateSummary; services.Dispose(); };
+        Closed += (_, _) => { picker.IsOpen = false; settingsWindow?.Close(); positioning.Dispose(); pulse.Stop(); tray.Dispose(); services.Changed -= UpdateSummary; services.Dispose(); };
     }
     private static void StyleButton(Button b)
     {
@@ -68,13 +100,45 @@ internal sealed class TimerWindow : Window
     }
     private void UpdateTimer()
     {
-        status.Text = timer.IsRunning ? "Demo · RUNNING" : "Demo · stopped";
+        taskName.Text = timer.SelectedTask?.Name ?? "Choose task ▴";
+        taskName.ToolTip = timer.SelectedTask?.Name ?? "Choose a task from your preferred list";
+        status.Text = timer.IsRunning ? "▶ Preview running" : "■ Preview stopped";
+        status.FontSize = 10;
         status.Foreground = timer.IsRunning ? new SolidColorBrush(Color.FromRgb(102, 235, 181)) : Brushes.LightGray;
         toggle.Content = timer.IsRunning ? "■" : "▶";
+        toggle.IsEnabled = timer.SelectedTask is not null;
+        toggle.ToolTip = timer.IsRunning ? "Stop local preview — no time is logged to ClickUp" : "Start a new local preview session — no time is logged to ClickUp";
+        elapsed.Text = timer.Elapsed;
     }
-    private void UpdateSummary() => ToolTip = services.Settings.IsConfigured
+    private void UpdateSummary()
+    {
+        var scope = services.Settings.UserId + "/" + services.Settings.WorkspaceId + "/" + services.Settings.PreferredListId;
+        if (scope != taskScope) { timer.Select(null); taskScope = scope; }
+        UpdateTimer();
+        ToolTip = services.Settings.IsConfigured
         ? $"Preferred list: {services.Settings.PreferredListName}\n{services.CacheNotice ?? "Demo timer — time is not logged yet."}"
         : "Open Settings to connect your ClickUp account. Demo timer — time is not logged yet.";
+        if (picker.IsOpen) LoadPicker();
+    }
+    private void OpenPicker() { LoadPicker(); picker.IsOpen = true; }
+    private void LoadPicker()
+    {
+        var settings = services.Settings;
+        var cache = settings.IsConfigured ? services.Store.LoadCache(settings.UserId!, settings.WorkspaceId!, settings.PreferredListId!) : null;
+        var selected = (taskList.SelectedItem as TaskSummary)?.Id ?? timer.SelectedTask?.Id;
+        taskList.ItemsSource = cache?.Tasks.OrderBy(t => t.Name).ToList();
+        taskList.SelectedItem = taskList.Items.Cast<TaskSummary>().FirstOrDefault(t => t.Id == selected);
+        pickerNotice.Text = !settings.IsConfigured ? "Choose a preferred list in Settings first."
+            : cache is null ? "No cached tasks yet. Refresh to load your preferred list."
+            : $"{settings.PreferredListName} · {cache.Tasks.Count} tasks\nLocal preview only — time is not logged to ClickUp.";
+        if (services.CacheNotice?.Contains("could not") == true) pickerNotice.Text += "\n⚠ Connection failed. Refresh to retry; cached tasks remain available.";
+    }
+    private void OpenTask()
+    {
+        if (timer.SelectedTask is not { } task) { OpenPicker(); return; }
+        try { Process.Start(new ProcessStartInfo("https://app.clickup.com/t/" + Uri.EscapeDataString(task.Id)) { UseShellExecute = true }); }
+        catch (Exception) { Notice("The task could not be opened in your browser."); }
+    }
     private void Notice(string message) => tray.ShowBalloonTip(4000, "ClickUp Timer", message, Forms.ToolTipIcon.Info);
     internal void OpenSettings()
     {

@@ -38,19 +38,23 @@ Phase 1 is approved by the user. The unchecked verification items remain documen
 - [x] Verify live account setup: the installed update automatically reconnects using the user's saved key, explicitly indicates it is saved, and exposes three lists with both selectors enabled.
 - [x] Add save/reopen regressions, including saving a validated key/workspace when list loading fails. All 50 Phase 2 checks pass; the updated build is installed and running.
 
+- [x] Fix preferred-list refresh overwriting the current selection. Preserve saved and in-progress selections, retain missing selections with an explanation, and pass all 56 Phase 2 checks.
+
 Acceptance: setup succeeds with a valid key, reports invalid credentials clearly, and restores configuration after restart without storing the key in plaintext application files.
 
 ## Phase 3 — Timer display and controls
 
-- [ ] Display the selected task name and a large `HH:MM:SS` current-session timer.
+- [x] Display the selected task name and a large `HH:MM:SS` current-session timer.
 - [ ] Display a smaller personal total for the selected task today.
 - [ ] Show explicit running/stopped text and icons alongside color; distinguish unconfirmed operations and connection failures.
-- [ ] Provide Start/Stop, task picker, settings, and an open-in-ClickUp action.
-- [ ] Open the task picker upward from taskbar mode.
-- [ ] Retain the completed session duration after Stop until the next Start or task selection.
+- [x] Provide Start/Stop, task picker, settings, and an open-in-ClickUp action.
+- [x] Open the task picker upward from taskbar mode.
+- [x] Retain the completed session duration after Stop until the next Start or task selection.
 - [ ] Keep controls readable and usable in both taskbar and floating modes at different display scales.
 
 Acceptance: the user can clearly identify the selected task, elapsed session time, and whether time is running or stopped at a glance.
+
+Phase 3 progress: installed a local preview with cached-task selection, explicit running/stopped text and icons, retained session duration, settings, and browser task links. Today shows an unavailable marker until Phase 5 supplies real totals; uncertain server operations also await Phase 5. Task switching stops the local preview. Search/MRU/creation remain Phase 4. Verified the taskbar UI and popup selection live; 61 service/UI/timer checks pass. Physical DPI/floating visual checks remain open.
 
 ## Phase 4 — Task selection, search, and creation
 
@@ -112,3 +116,4 @@ Acceptance: successful operations match ClickUp, task transfers do not overlap, 
 - [Get time entries within a date range](https://developer.clickup.com/reference/gettimeentrieswithinadaterange)
 
 - [x] Fix preferred-list refresh overwriting the current selection. Preserve saved and in-progress selections, retain missing selections with an explanation, and pass all 56 Phase 2 checks.
+
