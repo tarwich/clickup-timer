@@ -92,6 +92,23 @@ internal static class SettingsFlowChecks
                             scenario == 1 ? "User selection during refresh wins over saved choice" : missing ? "Missing list is retained instead of silently replaced" : "Completed refresh preserves saved list arriving in a later folder");
                         window.Close();
                     }
+                    var attempted = 0;
+                    var failure = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    var picker = new TaskPickerPanel(services, () => null, _ => throw new Exception("Failed creation must not select a task"), () => { },
+                        () => new ClickUpClient("fixture", new DelayedHandler(async (_, cancellation) =>
+                        {
+                            attempted++; await failure.Task.WaitAsync(cancellation);
+                            return new HttpResponseMessage(HttpStatusCode.InternalServerError);
+                        })));
+                    var draft = (TextBox)picker.FindName("SearchText");
+                    var create = (Button)picker.FindName("CreateTask");
+                    draft.Text = "Keep this task title";
+                    create.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    create.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    check(attempted == 1 && !create.IsEnabled, "Repeated create clicks issue only one request");
+                    failure.SetResult(); await Task.Delay(100);
+                    check(draft.Text == "Keep this task title" && draft.IsEnabled && create.IsEnabled, "Failed creation retains editable title and allows retry");
+                    check(((TextBlock)picker.FindName("Notice")).Text.Contains("retained"), "Failed creation explains recovery without clearing the draft");
                     finished.TrySetResult();
                 }
                 catch (Exception error) { finished.TrySetException(error); }

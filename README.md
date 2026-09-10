@@ -11,7 +11,7 @@ Launch `artifacts/phase2/ClickUpTimer.exe`, or run `./Run-Timer.ps1`. Keep the p
 3. Choose a workspace and preferred list. Labels include space/folder paths, and accessible shared lists are included.
 4. Click **Save settings**. The key is saved to Windows Credential Manager and the preferred list's tasks are cached in the background.
 
-To replace the key, enter a new one and connect before saving. Leave the field blank to retain the saved key. Cancel and failed connections leave the saved setup unchanged. Display settings can be saved offline without reconnecting an existing account. The preferred list is the saved destination for future task creation; picking/creation and real logging remain later phases.
+To replace the key, enter a new one and connect before saving. Leave the field blank to retain the saved key. Cancel and failed connections leave the saved setup unchanged. Display settings can be saved offline without reconnecting an existing account. The preferred list is the saved destination for future task creation; task selection and creation are available; real logging remains Phase 5.
 
 Available workspace/list choices remain selectable during refresh. The Display tab's **Apply display settings** button works independently of account loading and keeps any unsaved key in the open window.
 
@@ -41,7 +41,7 @@ Phase 1 placement is imported when no new settings exist. Corrupt settings produ
 Install the .NET 10 SDK and run `./Build-Timer.ps1`. It prefers `%LOCALAPPDATA%\Microsoft\dotnet`, runs both check projects, and publishes a self-contained Windows x64 build to `artifacts/phase2`. Close the app before rebuilding. `./Run-Timer.ps1 -Inspect` adds a taskbar button so desktop automation can find the timer; normal mode omits it. Use the Timer scripts for current work; the older Phase 1 artifacts/scripts are retained for reference.
 
 - 23 placement checks pass: gaps, occupied controls, stale geometry, floating bounds, negative monitor origins, and 100–200% scaling.
-- 61 service, settings, and preview timer checks pass: user/workspace/list discovery, shared and folder lists, cache pagination and isolation, corrupt settings, safe network errors, Credential Manager round-trip/replacement/cleanup using a dedicated test credential, and WPF settings-flow/save/reopen regressions, including selection preservation during progressive list loading.
+- 77 application checks pass: user/workspace/list discovery, shared and folder lists, cache pagination and isolation, corrupt settings, safe network errors, Credential Manager round-trip/replacement/cleanup using a dedicated test credential, and WPF settings-flow/save/reopen regressions, including selection preservation during progressive list loading.
 - Live UI checks passed for layout, switching between modes, two-axis floating dragging, saved placement restoration across restart, and startup remaining off.
 - Phase 1 Start-menu ownership/geometry behavior is preserved in the extracted positioning controller.
 - Live validation passed after the user saved their key: the installed app reconnects automatically, shows the saved-key indicator, and discovers three lists with both selectors enabled. Automated tests use isolated fixtures and test credentials.
@@ -56,5 +56,15 @@ See `PLAN.md` for phase checkboxes and remaining work.
 
 ## Phase 3 preview
 
-Click the task name to open the preferred-list picker above the timer. Double-click a task or select it and choose **Use selected task**. Start begins a fresh local session; Stop retains its duration. Selecting another task resets and stops the preview. The picker and right-click menu can open the selected task in ClickUp. **Today: —** means the personal ClickUp total is not yet available. Preview sessions are not saved or logged to ClickUp. Search, MRU, and creation remain Phase 4; real logging, totals, and recovery remain Phase 5.
+Click the task name to open the preferred-list picker above the timer. Double-click a task or select it and choose **Use selected task**. Start begins a fresh local session; Stop retains its duration. Selecting another task resets and stops the preview. The picker and right-click menu can open the selected task in ClickUp. **Today: —** means the personal ClickUp total is not yet available. Preview sessions are not saved or logged to ClickUp. Real logging, totals, and recovery remain Phase 5.
 
+
+## Phase 4 task selection
+
+The picker lists up to eight recent tasks before preferred-list tasks. Type to filter names and IDs locally; **Search workspace** explicitly expands to accessible tasks and subtasks across the workspace. Results appear as pages load and remain labeled incomplete until loading succeeds. Each time the picker opens it starts with local results again.
+
+The search text also supplies the title for **Create task in [preferred list]**. Creation makes a real, unassigned ClickUp task with the list's default status and selects it for the local timer preview. Failures retain your text. If a request loses its connection, refresh and check whether creation succeeded before retrying.
+
+Settings → **Ignored statuses** loads statuses grouped by list. Checked statuses are hidden from recent tasks and searches; the current task remains visible. Done/closed types are initially hidden. **Save settings** or **Apply status filters** stores changes. Save account changes before loading statuses for a different workspace.
+
+Recent selections and per-list status filters are stored in settings.json. Automated checks cover their persistence, filtering, task-creation payloads, and failed/duplicate creation requests. Live creation validation remains for the final integration smoke test.

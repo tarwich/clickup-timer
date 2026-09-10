@@ -59,7 +59,7 @@ try
     Check(!store.Load().LaunchAtSignIn && store.Load().Mode == "Taskbar", "Fresh defaults keep startup off");
     var config = new AppSettings { Mode = "Floating", UserId = "123", WorkspaceId = "42", PreferredListId = "l1", FloatingX = .2, FloatingY = .6 };
     store.Save(config);
-    Check(new SettingsStore(directory).Load() == config, "Settings survive a fresh store instance");
+    Check(System.Text.Json.JsonSerializer.Serialize(new SettingsStore(directory).Load()) == System.Text.Json.JsonSerializer.Serialize(config), "Settings survive a fresh store instance");
     Check(!File.ReadAllText(Path.Combine(directory, "settings.json")).Contains("placeholder"), "Settings contain no API key");
     store.SaveCache(new("123", "42", "l1", DateTimeOffset.Now, [new("t1", "Task", "open")]));
     Check(store.LoadCache("123", "42", "l1")?.Tasks.Count == 1, "Task cache persists");
@@ -92,7 +92,8 @@ timer.Toggle();
 Check(timer.IsRunning && timer.Elapsed == "00:00:00", "Next Start resets the session duration");
 timer.Select(new("two", "Second task", "open"));
 Check(!timer.IsRunning && timer.Elapsed == "00:00:00" && timer.SelectedTask?.Id == "two", "Selecting another task resets and stops local preview");
-Console.WriteLine($"{checks} Phase 2 checks passed.");
+await Phase4Checks.Run(Check);
+Console.WriteLine($"{checks} application checks passed.");
 
 sealed class FixtureHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
 {

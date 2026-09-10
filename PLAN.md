@@ -58,18 +58,20 @@ Phase 3 progress: installed a local preview with cached-task selection, explicit
 
 ## Phase 4 — Task selection, search, and creation
 
-- [ ] Show eight most recently selected tasks followed by preferred-list tasks, and persist MRU order across restarts.
-- [ ] Include everyone's accessible tasks and subtasks, not just the user's assignments.
-- [ ] Filter task names and IDs within the cached preferred list first.
-- [ ] Provide an explicit **Search workspace** action with paginated loading and progressive results.
-- [ ] Distinguish incomplete searches from searches with no matches.
-- [ ] Add ignored-status checkboxes in settings, grouped by list as needed; initially exclude done/closed statuses.
-- [ ] Apply status exclusions to search and MRU while keeping the actively timed task visible.
-- [ ] Offer **Create task in [preferred list]**, prefilled with the search text as the task title.
-- [ ] Create an unassigned task using the list's initial status, then select it using the normal task-switching behavior.
-- [ ] Preserve entered text and show a useful error when task creation fails.
+- [x] Show eight most recently selected tasks followed by preferred-list tasks, and persist MRU order across restarts.
+- [x] Include everyone's accessible tasks and subtasks, not just the user's assignments.
+- [x] Filter task names and IDs within the cached preferred list first.
+- [x] Provide an explicit **Search workspace** action with paginated loading and progressive results.
+- [x] Distinguish incomplete searches from searches with no matches.
+- [x] Add ignored-status checkboxes in settings, grouped by list as needed; initially exclude done/closed statuses.
+- [x] Apply status exclusions to search and MRU while keeping the actively timed task visible.
+- [x] Offer **Create task in [preferred list]**, prefilled with the search text as the task title.
+- [x] Create an unassigned task using the list's initial status, then select it using the normal task-switching behavior.
+- [x] Preserve entered text and show a useful error when task creation fails.
 
 Acceptance: the user can quickly return to recent tasks, search the preferred list before expanding the scope, exclude unwanted statuses, and create a task in the configured list.
+
+Phase 4 implemented: eight saved recent tasks, local-first filtering, explicit progressive workspace search, list-specific ignored statuses, and unassigned task creation using the entered search text. Verified local and workspace search and status discovery live. Creation requests and failure/duplicate-click behavior use fixtures; no live test tasks were created. All 77 application checks pass. Timing remains a local preview until Phase 5.
 
 ## Phase 5 — ClickUp timing and recovery
 
@@ -116,4 +118,3 @@ Acceptance: successful operations match ClickUp, task transfers do not overlap, 
 - [Get time entries within a date range](https://developer.clickup.com/reference/gettimeentrieswithinadaterange)
 
 - [x] Fix preferred-list refresh overwriting the current selection. Preserve saved and in-progress selections, retain missing selections with an explanation, and pass all 56 Phase 2 checks.
-

@@ -21,8 +21,7 @@ internal sealed class TimerWindow : Window
     private readonly Button toggle = new() { Content = "▶", ToolTip = "Start demo timer (no ClickUp logging)", Width = 34 };
     private readonly TextBlock taskName = new() { Text = "Choose task ▴", FontSize = 11, TextTrimming = TextTrimming.CharacterEllipsis };
     private readonly Popup picker = new() { StaysOpen = false, AllowsTransparency = true, Placement = PlacementMode.Top };
-    private readonly ListBox taskList = new() { DisplayMemberPath = "Name", MaxHeight = 280, MinHeight = 60 };
-    private readonly TextBlock pickerNotice = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 8) };
+    private readonly TaskPickerPanel pickerPanel;
     private string? taskScope;
     private SettingsWindow? settingsWindow;
 
@@ -65,22 +64,9 @@ internal sealed class TimerWindow : Window
         void Item(string name, Action action) { var item = new MenuItem { Header = name }; item.Click += (_, _) => action(); menu.Items.Add(item); }
         Item("Choose task", OpenPicker); Item("Open task in ClickUp", OpenTask);
         Item("Settings", OpenSettings); Item("Reset position", positioning.Reset); Item("Save positioning diagnostics", positioning.SaveDiagnostics); Item("Exit", Close);
-        var pickerPanel = new StackPanel { Margin = new Thickness(14) };
-        pickerPanel.SetValue(TextBlock.ForegroundProperty, Brushes.Black);
-        pickerPanel.Children.Add(new TextBlock { Text = "Choose a task", FontSize = 18, FontWeight = FontWeights.SemiBold });
-        pickerPanel.Children.Add(pickerNotice); pickerPanel.Children.Add(taskList);
-        var pick = new Button { Content = "Use selected task", Height = 32, Margin = new Thickness(0, 8, 0, 0) };
-        void SelectTask() { if (taskList.SelectedItem is TaskSummary task) { timer.Select(task); picker.IsOpen = false; UpdateTimer(); } }
-        pick.Click += (_, _) => SelectTask();
-        taskList.MouseDoubleClick += (_, _) => SelectTask();
-        taskList.KeyDown += (_, e) => { if (e.Key == Key.Enter) { SelectTask(); e.Handled = true; } };
-        pickerPanel.Children.Add(pick);
-        var openTask = new Button { Content = "Open current task in ClickUp", Height = 30, Margin = new Thickness(0, 6, 0, 0) };
-        openTask.Click += (_, _) => OpenTask(); pickerPanel.Children.Add(openTask);
-        var refreshTasks = new Button { Content = "Refresh preferred-list tasks", Height = 30, Margin = new Thickness(0, 6, 0, 0) };
-        refreshTasks.Click += async (_, _) => { refreshTasks.IsEnabled = false; pickerNotice.Text = "Refreshing tasks…"; await services.RefreshCache(); refreshTasks.IsEnabled = true; LoadPicker(); };
-        pickerPanel.Children.Add(refreshTasks);
-        picker.Child = new Border { Width = 360, Background = Brushes.White, BorderBrush = Brushes.SlateGray, BorderThickness = new Thickness(1), Child = pickerPanel };
+        pickerPanel = new TaskPickerPanel(services, () => timer.SelectedTask, task => { timer.Select(task); picker.IsOpen = false; UpdateTimer(); }, OpenTask);
+        picker.Child = new Border { Width = 440, Background = Brushes.White, BorderBrush = Brushes.SlateGray, BorderThickness = new Thickness(1), Child = pickerPanel };
+        picker.Closed += (_, _) => pickerPanel.Cancel();
         picker.PlacementTarget = choose;
         ContextMenu = menu;
         var trayMenu = new Forms.ContextMenuStrip();
@@ -90,7 +76,7 @@ internal sealed class TimerWindow : Window
         tray.ContextMenuStrip = trayMenu; tray.DoubleClick += (_, _) => Dispatcher.Invoke(OpenSettings);
         pulse.Tick += (_, _) => elapsed.Text = timer.Elapsed; pulse.Start();
         services.Changed += UpdateSummary; UpdateSummary();
-        Loaded += (_, _) => { if (openSettings || !services.Settings.IsConfigured) Dispatcher.BeginInvoke(OpenSettings); };
+        Loaded += (_, _) => { if (openSettings || !services.Settings.IsConfigured) Dispatcher.BeginInvoke(OpenSettings); if (services.Settings.IsConfigured) _ = services.RefreshCache(); };
         Closed += (_, _) => { picker.IsOpen = false; settingsWindow?.Close(); positioning.Dispose(); pulse.Stop(); tray.Dispose(); services.Changed -= UpdateSummary; services.Dispose(); };
     }
     private static void StyleButton(Button b)
@@ -120,19 +106,8 @@ internal sealed class TimerWindow : Window
         : "Open Settings to connect your ClickUp account. Demo timer — time is not logged yet.";
         if (picker.IsOpen) LoadPicker();
     }
-    private void OpenPicker() { LoadPicker(); picker.IsOpen = true; }
-    private void LoadPicker()
-    {
-        var settings = services.Settings;
-        var cache = settings.IsConfigured ? services.Store.LoadCache(settings.UserId!, settings.WorkspaceId!, settings.PreferredListId!) : null;
-        var selected = (taskList.SelectedItem as TaskSummary)?.Id ?? timer.SelectedTask?.Id;
-        taskList.ItemsSource = cache?.Tasks.OrderBy(t => t.Name).ToList();
-        taskList.SelectedItem = taskList.Items.Cast<TaskSummary>().FirstOrDefault(t => t.Id == selected);
-        pickerNotice.Text = !settings.IsConfigured ? "Choose a preferred list in Settings first."
-            : cache is null ? "No cached tasks yet. Refresh to load your preferred list."
-            : $"{settings.PreferredListName} · {cache.Tasks.Count} tasks\nLocal preview only — time is not logged to ClickUp.";
-        if (services.CacheNotice?.Contains("could not") == true) pickerNotice.Text += "\n⚠ Connection failed. Refresh to retry; cached tasks remain available.";
-    }
+    private void OpenPicker() { Activate(); picker.IsOpen = true; pickerPanel.Open(); }
+    private void LoadPicker() => pickerPanel.Refresh();
     private void OpenTask()
     {
         if (timer.SelectedTask is not { } task) { OpenPicker(); return; }

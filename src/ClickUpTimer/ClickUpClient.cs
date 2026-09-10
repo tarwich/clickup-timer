@@ -20,11 +20,12 @@ internal sealed class ClickUpClient : IDisposable
         http.BaseAddress = new Uri("https://api.clickup.com/api/v2/");
         http.Timeout = TimeSpan.FromSeconds(25);
     }
-    private async Task<JsonDocument> Get(string path, CancellationToken cancellation)
+    private async Task<JsonDocument> Get(string path, CancellationToken cancellation, object? body = null)
     {
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, path);
+            using var request = new HttpRequestMessage(body is null ? HttpMethod.Get : HttpMethod.Post, path);
+            if (body is not null) request.Content = new StringContent(JsonSerializer.Serialize(body), System.Text.Encoding.UTF8, "application/json");
             request.Headers.Add("Authorization", token);
             using var response = await http.SendAsync(request, cancellation);
             if (!response.IsSuccessStatusCode)
@@ -101,10 +102,35 @@ internal sealed class ClickUpClient : IDisposable
             using var json = await Get($"list/{Segment(list)}/task?page={page}&subtasks=true&include_closed=true&include_timl=true", cancellation);
             var tasks = json.RootElement.GetProperty("tasks");
             foreach (var item in tasks.EnumerateArray())
-                result[Id(item)] = new(Id(item), Name(item), item.GetProperty("status").GetProperty("status").GetString() ?? "");
+                result[Id(item)] = ParseTask(item, list);
             if (tasks.GetArrayLength() == 0 || (json.RootElement.TryGetProperty("last_page", out var last) && last.ValueKind == JsonValueKind.True)) break;
         }
         return result.Values.ToList();
+    }
+    private static TaskSummary ParseTask(JsonElement item, string? list = null)
+    {
+        var status = item.GetProperty("status");
+        return new(Id(item), Name(item), status.GetProperty("status").GetString() ?? "",
+            item.TryGetProperty("list", out var location) ? Id(location) : list,
+            status.TryGetProperty("type", out var type) ? type.GetString() : null);
+    }
+    internal async Task<List<TaskSummary>> WorkspacePage(string workspace, int page, CancellationToken cancellation)
+    {
+        using var json = await Get($"team/{Segment(workspace)}/task?page={page}&subtasks=true&include_closed=true", cancellation);
+        return json.RootElement.GetProperty("tasks").EnumerateArray().Select(t => ParseTask(t)).ToList();
+    }
+    internal async Task<List<Choice>> Statuses(string list, CancellationToken cancellation)
+    {
+        using var json = await Get($"list/{Segment(list)}", cancellation);
+        return json.RootElement.GetProperty("statuses").EnumerateArray()
+            .Select(s => new Choice(s.GetProperty("type").GetString() ?? "", s.GetProperty("status").GetString() ?? "")).ToList();
+    }
+    internal async Task<TaskSummary> CreateTask(string list, string name, CancellationToken cancellation)
+    {
+        if (string.IsNullOrWhiteSpace(name)) throw new ClickUpException("Enter a task title first.");
+        using var json = await Get($"list/{Segment(list)}/task", cancellation,
+            new { name = name.Trim(), assignees = Array.Empty<int>(), notify_all = false });
+        return ParseTask(json.RootElement, list);
     }
     public void Dispose() => http.Dispose();
 }

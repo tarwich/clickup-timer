@@ -18,10 +18,13 @@ internal sealed record AppSettings
     public string? WorkspaceName { get; init; }
     public string? PreferredListId { get; init; }
     public string? PreferredListName { get; init; }
+    public List<RecentTask> RecentTasks { get; init; } = [];
+    public Dictionary<string, List<string>> IgnoredStatuses { get; init; } = [];
     public bool IsConfigured => UserId is not null && WorkspaceId is not null && PreferredListId is not null;
 }
 
-internal sealed record TaskSummary(string Id, string Name, string Status);
+internal sealed record TaskSummary(string Id, string Name, string Status, string? ListId = null, string? StatusType = null);
+internal sealed record RecentTask(string UserId, string WorkspaceId, TaskSummary Task);
 internal sealed record TaskCache(string UserId, string WorkspaceId, string ListId, DateTimeOffset FetchedAt, List<TaskSummary> Tasks);
 
 internal sealed class SettingsStore

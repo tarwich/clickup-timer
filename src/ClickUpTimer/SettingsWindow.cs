@@ -9,6 +9,7 @@ namespace ClickUpTimer;
 internal sealed class SettingsWindow : Window
 {
     private readonly AppServices services;
+    private readonly StatusSettingsPanel statusFilters;
     private readonly Func<string, ClickUpClient> createClient;
     private readonly PasswordBox key = new() { Height = 34, Padding = new Thickness(7), MaxLength = 1280 };
     private readonly ComboBox workspaces = new() { Height = 34, DisplayMemberPath = "Name", SelectedValuePath = "Id" };
@@ -86,6 +87,9 @@ internal sealed class SettingsWindow : Window
         };
         display.Children.Add(applyDisplay);
         tabs.Items.Add(new TabItem { Header = "Display & startup", Content = display });
+        statusFilters = new StatusSettingsPanel(services);
+        tabs.Items.Add(new TabItem { Header = "Ignored statuses", Content = new ScrollViewer { Content = statusFilters, VerticalScrollBarVisibility = ScrollBarVisibility.Auto } });
+        Closed += (_, _) => statusFilters.Cancel();
         Content = root;
         NameScope.SetNameScope(this, new NameScope());
         RegisterName("ApiKey", key); RegisterName("Workspaces", workspaces); RegisterName("PreferredList", lists);
@@ -239,7 +243,7 @@ internal sealed class SettingsWindow : Window
         }
         try
         {
-            services.Save(next, validatedKey);
+            services.Save(statusFilters.ApplyTo(next), validatedKey);
             _ = services.RefreshCache();
             Close();
         }
