@@ -13,7 +13,7 @@ internal sealed class SettingsWindow : Window
     private readonly Func<string, ClickUpClient> createClient;
     private readonly PasswordBox key = new() { Height = 34, Padding = new Thickness(7), MaxLength = 1280 };
     private readonly ComboBox workspaces = new() { Height = 34, DisplayMemberPath = "Name", SelectedValuePath = "Id" };
-    private readonly ComboBox lists = new() { Height = 34, DisplayMemberPath = "Name", SelectedValuePath = "Id", IsTextSearchEnabled = true };
+    private readonly PreferredListPicker lists = new();
     private readonly ComboBox mode = new() { Height = 34, ItemsSource = new[] { "Taskbar", "Floating" } };
     private readonly ComboBox monitor = new() { Height = 34, DisplayMemberPath = "Name", SelectedValuePath = "Id" };
     private readonly CheckBox startup = new() { Content = "Launch ClickUp Timer when I sign in", Margin = new Thickness(0, 16, 0, 0) };
@@ -107,7 +107,7 @@ internal sealed class SettingsWindow : Window
             workspaces.ItemsSource = new[] { new Choice(settings.WorkspaceId!, settings.WorkspaceName ?? settings.WorkspaceId!) }; workspaces.SelectedIndex = 0;
             if (settings.PreferredListId is not null)
             {
-                lists.ItemsSource = new[] { new Choice(settings.PreferredListId!, settings.PreferredListName ?? settings.PreferredListId!) }; lists.SelectedIndex = 0;
+                lists.SetChoices([new Choice(settings.PreferredListId!, settings.PreferredListName ?? settings.PreferredListId!)], new(settings.PreferredListId!, settings.PreferredListName ?? settings.PreferredListId!));
                 loadedListScope = settings.UserId + "/" + settings.WorkspaceId;
                 listChoices[loadedListScope] = [new(settings.PreferredListId!, settings.PreferredListName ?? settings.PreferredListId!)];
             }
@@ -183,12 +183,11 @@ internal sealed class SettingsWindow : Window
         listRequest?.Cancel(); listRequest?.Dispose(); listRequest = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
         var cancellation = listRequest.Token;
         var scope = validatedUser?.Id + "/" + workspace.Id;
-        var preferredList = loadedListScope == scope ? lists.SelectedItem as Choice : null;
+        var preferredList = loadedListScope == scope ? lists.SelectedChoice : null;
         loadingLists = true;
         if (loadedListScope != scope)
         {
-            lists.ItemsSource = listChoices.GetValueOrDefault(scope) ?? [];
-            lists.SelectedIndex = -1;
+            lists.SetChoices(listChoices.GetValueOrDefault(scope) ?? [], preferredList, resetSearch: true, loading: true);
             loadedListScope = scope;
         }
         connection.Text = "Loading lists…"; message.Text = "";
@@ -199,11 +198,11 @@ internal sealed class SettingsWindow : Window
                 if (version != listVersion || closed) return;
                 // Keep the current choice visible until its location has been fetched.
                 // Reading it before replacing ItemsSource also honors changes made while loading.
-                preferredList = lists.SelectedItem as Choice ?? preferredList;
+                preferredList = lists.SelectedChoice ?? preferredList;
                 var visible = available.ToList();
                 if (preferredList is not null && !visible.Any(l => l.Id == preferredList.Id)) visible.Add(preferredList);
-                listChoices[scope] = visible; lists.ItemsSource = visible;
-                lists.SelectedItem = preferredList is null ? visible.FirstOrDefault() : visible.First(l => l.Id == preferredList.Id);
+                listChoices[scope] = visible;
+                lists.SetChoices(visible, preferredList, loading: loadingLists);
             }
             var progress = new Progress<List<Choice>>(available =>
             {
@@ -215,7 +214,7 @@ internal sealed class SettingsWindow : Window
             if (version != listVersion || closed) return;
             ShowAvailable(available);
             connection.Text = available.Count == 0 ? "No accessible active lists in this workspace." : $"Connected as {validatedUser?.Name} · {available.Count} lists available.";
-            if (lists.SelectedItem is Choice selected && !available.Any(l => l.Id == selected.Id))
+            if (lists.SelectedChoice is Choice selected && !available.Any(l => l.Id == selected.Id))
                 message.Text = "Your selected list was not returned by ClickUp. It has been kept; refresh to retry or choose another list.";
         }
         catch (OperationCanceledException) { }
@@ -224,7 +223,7 @@ internal sealed class SettingsWindow : Window
             if (version == listVersion && !closed)
             {
                 message.Text = SafeMessage(ex);
-                connection.Text = lists.Items.Count > 0 ? "Some locations could not be loaded. Available lists are still selectable." : "Lists could not be loaded. Your key and workspace can still be saved; use Refresh to retry.";
+                connection.Text = lists.AvailableCount > 0 ? "Some locations could not be loaded. Available lists are still searchable." : "Lists could not be loaded. Your key and workspace can still be saved; use Refresh to retry.";
             }
         }
         finally { if (version == listVersion && !closed) loadingLists = false; }
@@ -238,7 +237,7 @@ internal sealed class SettingsWindow : Window
         if (validatedUser is not null)
         {
             if (workspaces.SelectedItem is not Choice workspace) { message.Text = "Select a workspace."; return; }
-            var list = loadedListScope == validatedUser.Id + "/" + workspace.Id ? lists.SelectedItem as Choice : null;
+            var list = loadedListScope == validatedUser.Id + "/" + workspace.Id ? lists.SelectedChoice : null;
             next = next with { UserId = validatedUser.Id, UserName = validatedUser.Name, WorkspaceId = workspace.Id, WorkspaceName = workspace.Name, PreferredListId = list?.Id, PreferredListName = list?.Name };
         }
         try

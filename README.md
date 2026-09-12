@@ -8,7 +8,7 @@ Launch `artifacts/phase2/ClickUpTimer.exe` or `./Run-Timer.ps1`. The existing la
 
 1. Open Settings using the gear button.
 2. Paste your personal API key. Workspaces and lists load automatically. Saved keys display an explicit indicator without exposing the secret.
-3. Choose a workspace and preferred list, then Save settings.
+3. Choose a workspace. Search the full Space / Folder / List path or list ID, select a preferred list, then Save settings. The selected list stays visible while results load, and broad result sets are capped to keep Settings responsive.
 4. Click the task name on the timer to choose a task. Type to filter names and IDs locally; use **Search workspace** to load wider results progressively.
 5. Press Start to log time. Stop retains the completed duration. Selecting another task while running finishes the old entry before starting the new one. Selecting while stopped stays stopped.
 
@@ -50,12 +50,12 @@ Opening Start does not intentionally hide the timer. It retains its last verifie
 
 Install .NET 10 SDK and run `./Build-Timer.ps1`. The script prefers `%LOCALAPPDATA%\Microsoft\dotnet`, runs the check projects, and publishes a self-contained Windows x64 app. Exit the running app normally before rebuilding so it can stop logging.
 
-99 application checks cover account setup, persistence, MRU/filtering, task creation, timing API payloads, task transfers, duplicate operations, lost responses, offline/restart stop recovery, external conflicts, rate-limit backoff, and midnight/DST totals. There are also 23 placement geometry checks.
+103 application checks cover account setup, large-workspace list search, persistence, MRU/filtering, task creation, timing API payloads, task transfers, duplicate operations, lost responses, offline/restart stop recovery, external conflicts, rate-limit backoff, and midnight/DST totals. There are also 23 placement geometry checks.
 
 Live task search, status discovery, and user-confirmed task creation work. Read-only timing authentication and current-entry/history queries passed. Live Start/Stop has been clicked and verified against the server. Physical lock/sleep tests remain part of the final smoke test. Monitor disconnect/reconnect and actual display-scale changes also remain deferred hardware checks. Use `./Run-Timer.ps1 -Inspect` to expose a timer taskbar button for desktop automation.
 
 ## Code organization
 
-`TimerWindow`, `TaskPickerPanel`, `SettingsWindow`, and `StatusSettingsPanel` provide the UI. `TimerCoordinator` owns server timing and recovery; `TimingMath` computes display durations and local-day totals. `ClickUpClient` handles authenticated API operations. `SettingsStore`, `CredentialStore`, and `StartupRegistration` handle persistence. `WindowPositioner`, `Placement`, `Native`, and `TaskbarScanner` handle Windows geometry.
+`TimerWindow`, `TaskPickerPanel`, `SettingsWindow`, `PreferredListPicker`, and `StatusSettingsPanel` provide the UI. `TimerCoordinator` owns server timing and recovery; `TimingMath` computes display durations and local-day totals. `ClickUpClient` handles authenticated API operations. `SettingsStore`, `CredentialStore`, and `StartupRegistration` handle persistence. `WindowPositioner`, `Placement`, `Native`, and `TaskbarScanner` handle Windows geometry.
 
 See [PLAN.md](PLAN.md) for phase checkboxes and remaining verification. API behavior follows ClickUp's [time entry documentation](https://developer.clickup.com/reference/getrunningtimeentry), [entry updates](https://developer.clickup.com/reference/updateatimeentry), and [date-range queries](https://developer.clickup.com/reference/gettimeentrieswithinadaterange).

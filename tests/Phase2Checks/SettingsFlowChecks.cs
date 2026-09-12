@@ -39,20 +39,20 @@ internal static class SettingsFlowChecks
                     window = new SettingsWindow(services, factory);
                     var key = (PasswordBox)window.FindName("ApiKey");
                     var workspaces = (ComboBox)window.FindName("Workspaces");
-                    var lists = (ComboBox)window.FindName("PreferredList");
+                    var lists = (PreferredListPicker)window.FindName("PreferredList");
                     check(workspaces.IsEnabled && lists.IsEnabled, "Settings dropdowns are not disabled before connecting");
                     key.Password = "fixture-only-key";
                     check(workspaces.IsEnabled && lists.IsEnabled, "Editing a key keeps dropdowns usable");
                     await Task.Delay(1500);
-                    check(workspaces.Items.Count == 1 && lists.Items.Count == 1, "Pasting a key automatically loads workspace and list without Connect click");
+                    check(workspaces.Items.Count == 1 && lists.AvailableCount == 1, "Pasting a key automatically loads workspace and list without Connect click");
                     key.Password = "replacement-fixture-key";
-                    check(workspaces.Items.Count == 1 && lists.Items.Count == 1, "Key changes retain available selections during refresh");
+                    check(workspaces.Items.Count == 1 && lists.AvailableCount == 1, "Key changes retain available selections during refresh");
                     ((Button)window.FindName("ApplyDisplay")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     check(File.Exists(Path.Combine(path, "settings.json")), "Display preferences save while account validation is pending");
                     check(!services.Settings.IsConfigured && credentials.Read() is null && key.Password == "replacement-fixture-key", "Applying display preserves unsaved key without committing account draft");
                     failLists = true; account = 2;
                     await Task.Delay(1500);
-                    check(lists.IsEnabled && lists.Items.Count == 0, "Failed list fetch leaves control enabled with no stale other-account choices");
+                    check(lists.IsEnabled && lists.AvailableCount == 0, "Failed list fetch leaves control enabled with no stale other-account choices");
                     ((Button)window.FindName("SaveSettings")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     check(credentials.Exists() && services.Settings.WorkspaceId == "w" && services.Settings.PreferredListId is null, "Save keeps validated key and workspace even when list fetch fails");
                     window = new SettingsWindow(services, factory);
@@ -61,7 +61,7 @@ internal static class SettingsFlowChecks
                     failLists = false;
                     window.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
                     await Task.Delay(150);
-                    check(((ComboBox)window.FindName("PreferredList")).Items.Count == 1, "Reopening settings reconnects saved key and reloads lists automatically");
+                    check(((PreferredListPicker)window.FindName("PreferredList")).AvailableCount == 1, "Reopening settings reconnects saved key and reloads lists automatically");
                     window.Close();
                     services.Save(services.Settings with { PreferredListId = "late", PreferredListName = "Saved list" });
                     for (var scenario = 0; scenario < 3; scenario++)
@@ -81,17 +81,31 @@ internal static class SettingsFlowChecks
                                 : """{"lists":[],"folders":[]}""";
                             return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) };
                         })));
-                        lists = (ComboBox)window.FindName("PreferredList");
+                        lists = (PreferredListPicker)window.FindName("PreferredList");
                         window.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
                         await Task.Delay(100);
-                        check(lists.Items.Count == 2 && lists.SelectedValue as string == "late", "Partial refresh preserves saved choice before its folder loads");
-                        if (scenario == 1) lists.SelectedValue = "early";
+                        check(lists.AvailableCount == 2 && lists.SelectedChoice?.Id == "late", "Partial refresh preserves saved choice before its folder loads");
+                        if (scenario == 1) lists.Select("early");
                         release.SetResult();
                         await Task.Delay(100);
-                        check(lists.SelectedValue as string == (scenario == 1 ? "early" : "late"),
+                        check(lists.SelectedChoice?.Id == (scenario == 1 ? "early" : "late"),
                             scenario == 1 ? "User selection during refresh wins over saved choice" : missing ? "Missing list is retained instead of silently replaced" : "Completed refresh preserves saved list arriving in a later folder");
                         window.Close();
                     }
+                    var largePicker = new PreferredListPicker();
+                    var manyLists = Enumerable.Range(0, 5000)
+                        .Select(i => new Choice($"list-{i}", i == 4321 ? "Operations / North America / Payroll" : $"Space {i / 100} / Folder {i / 10} / List {i}"))
+                        .ToList();
+                    largePicker.SetChoices(manyLists, manyLists[3210]);
+                    check(largePicker.AvailableCount == 5000 && largePicker.DisplayedCount == 50 && largePicker.SelectedChoice?.Id == "list-3210",
+                        "Large list picker caps the initial browse set and preserves the selected list");
+                    largePicker.SearchBox.Text = "operations payroll";
+                    check(largePicker.DisplayedCount == 1 && largePicker.SelectedChoice?.Id == "list-3210",
+                        "List search matches multiple words across full paths without changing selection");
+                    largePicker.SearchBox.Text = "list-4321";
+                    check(largePicker.DisplayedCount == 1, "List search matches list IDs");
+                    largePicker.SearchBox.Text = "list";
+                    check(largePicker.DisplayedCount == 200, "Broad list searches are capped for responsive rendering");
                     var attempted = 0;
                     var failure = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                     var picker = new TaskPickerPanel(services, () => null, _ => throw new Exception("Failed creation must not select a task"), () => { },

@@ -39,6 +39,7 @@ Phase 1 is approved by the user. The unchecked verification items remain documen
 - [x] Add save/reopen regressions, including saving a validated key/workspace when list loading fails. All 50 Phase 2 checks pass; the updated build is installed and running.
 
 - [x] Fix preferred-list refresh overwriting the current selection. Preserve saved and in-progress selections, retain missing selections with an explanation, and pass all 56 Phase 2 checks.
+- [x] Scale preferred-list selection for large workspaces. Search all lists by multi-word Space / Folder / List path or list ID, pin the current selection, cap rendered results, and verify the picker with 5,000 lists.
 
 Acceptance: setup succeeds with a valid key, reports invalid credentials clearly, and restores configuration after restart without storing the key in plaintext application files.
 
