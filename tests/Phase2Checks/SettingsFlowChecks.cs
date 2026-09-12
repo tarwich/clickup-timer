@@ -76,8 +76,9 @@ internal static class SettingsFlowChecks
                                 : route.EndsWith("/team") ? """{"teams":[{"id":"w","name":"Workspace"}]}"""
                                 : route.EndsWith("/space") ? """{"spaces":[{"id":"s","name":"Space"}]}"""
                                 : route.Contains("/space/") && route.EndsWith("/list") ? """{"lists":[{"id":"early","name":"First list"}]}"""
-                                : route.EndsWith("/folder") ? """{"folders":[{"id":"f","name":"Folder"}]}"""
-                                : route.EndsWith("/list") && !missing ? """{"lists":[{"id":"late","name":"Saved list"}]}"""
+                                : route.EndsWith("/folder") ? missing
+                                    ? """{"folders":[{"id":"f","name":"Folder","lists":[]}]}"""
+                                    : """{"folders":[{"id":"f","name":"Folder","lists":[{"id":"late","name":"Saved list"}]}]}"""
                                 : """{"lists":[],"folders":[]}""";
                             return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) };
                         })));

@@ -7,7 +7,7 @@ A compact Windows timer in the unused part of the existing taskbar, with optiona
 Launch `artifacts/phase2/ClickUpTimer.exe` or `./Run-Timer.ps1`. The existing launch path is retained for upgrades. Keep the published folder together; it includes the .NET runtime.
 
 1. Open Settings using the gear button.
-2. Paste your personal API key. Workspaces and lists load automatically. Saved keys display an explicit indicator without exposing the secret.
+2. Paste your personal API key. Workspaces and lists load automatically. Folder responses are consumed as hierarchy batches, avoiding a separate request for every Folder. Saved keys display an explicit indicator without exposing the secret.
 3. Choose a workspace. Search the full Space / Folder / List path or list ID, select a preferred list, then Save settings. The selected list stays visible while results load, and broad result sets are capped to keep Settings responsive.
 4. Click the task name on the timer to choose a task. Type to filter names and IDs locally; use **Search workspace** to load wider results progressively.
 5. Press Start to log time. Stop retains the completed duration. Selecting another task while running finishes the old entry before starting the new one. Selecting while stopped stays stopped.
@@ -50,7 +50,7 @@ Opening Start does not intentionally hide the timer. It retains its last verifie
 
 Install .NET 10 SDK and run `./Build-Timer.ps1`. The script prefers `%LOCALAPPDATA%\Microsoft\dotnet`, runs the check projects, and publishes a self-contained Windows x64 app. Exit the running app normally before rebuilding so it can stop logging.
 
-103 application checks cover account setup, large-workspace list search, persistence, MRU/filtering, task creation, timing API payloads, task transfers, duplicate operations, lost responses, offline/restart stop recovery, external conflicts, rate-limit backoff, and midnight/DST totals. There are also 23 placement geometry checks.
+102 application checks cover account setup, batched hierarchy discovery, large-workspace list search, persistence, MRU/filtering, task creation, timing API payloads, task transfers, duplicate operations, lost responses, offline/restart stop recovery, external conflicts, rate-limit backoff, and midnight/DST totals. There are also 23 placement geometry checks.
 
 Live task search, status discovery, and user-confirmed task creation work. Read-only timing authentication and current-entry/history queries passed. Live Start/Stop has been clicked and verified against the server. Physical lock/sleep tests remain part of the final smoke test. Monitor disconnect/reconnect and actual display-scale changes also remain deferred hardware checks. Use `./Run-Timer.ps1 -Inspect` to expose a timer taskbar button for desktop automation.
 

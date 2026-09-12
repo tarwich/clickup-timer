@@ -61,7 +61,8 @@ internal sealed class ClickUpClient : IDisposable, ITimingApi
     internal async Task<List<Choice>> Lists(string workspace, CancellationToken cancellation, IProgress<List<Choice>>? progress = null)
     {
         var result = new Dictionary<string, Choice>();
-        void AddLists(JsonElement root, string prefix)
+        void Report() => progress?.Report(result.Values.OrderBy(c => c.Name, StringComparer.CurrentCultureIgnoreCase).ToList());
+        void AddLists(JsonElement root, string prefix, bool report = true)
         {
             if (!root.TryGetProperty("lists", out var lists)) return;
             foreach (var list in lists.EnumerateArray())
@@ -69,7 +70,42 @@ internal sealed class ClickUpClient : IDisposable, ITimingApi
                 if (list.TryGetProperty("archived", out var archived) && archived.ValueKind == JsonValueKind.True) continue;
                 var id = Id(list); result.TryAdd(id, new Choice(id, prefix + Name(list)));
             }
-            progress?.Report(result.Values.OrderBy(c => c.Name, StringComparer.CurrentCultureIgnoreCase).ToList());
+            if (report) Report();
+        }
+        static string? ParentId(JsonElement folder)
+        {
+            if (!folder.TryGetProperty("parent_folder", out var parent) || parent.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined) return null;
+            if (parent.ValueKind == JsonValueKind.Object && parent.TryGetProperty("id", out var id)) return id.ToString();
+            return parent.ToString();
+        }
+        void AddFolderLists(JsonElement folderArray, string prefix)
+        {
+            var folders = new Dictionary<string, (JsonElement Folder, string? Parent)>();
+            void Collect(JsonElement items, string? impliedParent = null)
+            {
+                foreach (var folder in items.EnumerateArray())
+                {
+                    var id = Id(folder);
+                    folders[id] = (folder, ParentId(folder) ?? impliedParent);
+                    if (folder.TryGetProperty("folders", out var children) && children.ValueKind == JsonValueKind.Array)
+                        Collect(children, id);
+                }
+            }
+            Collect(folderArray);
+            string PathFor(string id)
+            {
+                var names = new Stack<string>();
+                var seen = new HashSet<string>();
+                while (folders.TryGetValue(id, out var node) && seen.Add(id))
+                {
+                    names.Push(Name(node.Folder));
+                    if (node.Parent is null) break;
+                    id = node.Parent;
+                }
+                return prefix + string.Join(" / ", names) + " / ";
+            }
+            foreach (var (id, node) in folders) AddLists(node.Folder, PathFor(id), report: false);
+            Report();
         }
         using var spaces = await Get($"team/{Segment(workspace)}/space?archived=false", cancellation);
         foreach (var space in spaces.RootElement.GetProperty("spaces").EnumerateArray())
@@ -78,21 +114,13 @@ internal sealed class ClickUpClient : IDisposable, ITimingApi
             using var loose = await Get($"space/{Segment(Id(space))}/list?archived=false", cancellation);
             AddLists(loose.RootElement, path);
             using var folders = await Get($"space/{Segment(Id(space))}/folder?archived=false", cancellation);
-            foreach (var folder in folders.RootElement.GetProperty("folders").EnumerateArray())
-            {
-                using var lists = await Get($"folder/{Segment(Id(folder))}/list?archived=false", cancellation);
-                AddLists(lists.RootElement, path + Name(folder) + " / ");
-            }
+            AddFolderLists(folders.RootElement.GetProperty("folders"), path);
         }
         // Guests and members can also have lists shared outside their space membership.
         using var shared = await Get($"team/{Segment(workspace)}/shared", cancellation);
         AddLists(shared.RootElement, "Shared / ");
         if (shared.RootElement.TryGetProperty("folders", out var sharedFolders))
-            foreach (var folder in sharedFolders.EnumerateArray())
-            {
-                using var lists = await Get($"folder/{Segment(Id(folder))}/list?archived=false", cancellation);
-                AddLists(lists.RootElement, "Shared / " + Name(folder) + " / ");
-            }
+            AddFolderLists(sharedFolders, "Shared / ");
         return result.Values.OrderBy(c => c.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
     }
     internal async Task<List<TaskSummary>> Tasks(string list, CancellationToken cancellation)

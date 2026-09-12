@@ -40,6 +40,7 @@ Phase 1 is approved by the user. The unchecked verification items remain documen
 
 - [x] Fix preferred-list refresh overwriting the current selection. Preserve saved and in-progress selections, retain missing selections with an explanation, and pass all 56 Phase 2 checks.
 - [x] Scale preferred-list selection for large workspaces. Search all lists by multi-word Space / Folder / List path or list ID, pin the current selection, cap rendered results, and verify the picker with 5,000 lists.
+- [x] Remove redundant per-Folder list requests. Consume the Lists embedded in ClickUp's Folder and shared-hierarchy responses and preserve complete nested Folder paths.
 
 Acceptance: setup succeeds with a valid key, reports invalid credentials clearly, and restores configuration after restart without storing the key in plaintext application files.
 

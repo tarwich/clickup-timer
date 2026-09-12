@@ -28,8 +28,7 @@ var handler = new FixtureHandler(request =>
         "team" => """{"teams":[{"id":"42","name":"Workspace"}]}""",
         "team/42/space?archived=false" => """{"spaces":[{"id":"s1","name":"Engineering"}]}""",
         "space/s1/list?archived=false" => """{"lists":[{"id":"l1","name":"Inbox"}]}""",
-        "space/s1/folder?archived=false" => """{"folders":[{"id":"f1","name":"Projects"}]}""",
-        "folder/f1/list?archived=false" => """{"lists":[{"id":"l2","name":"Inbox"}]}""",
+        "space/s1/folder?archived=false" => """{"folders":[{"id":"f1","name":"Projects","lists":[]},{"id":"f2","name":"2026","parent_folder":"f1","lists":[{"id":"l2","name":"Inbox"}]}]}""",
         "team/42/shared" => """{"lists":[{"id":"l1","name":"Inbox"},{"id":"l3","name":"Guest list"},{"id":"old","name":"Old","archived":true}],"folders":[]}""",
         "list/l1/task?page=0&subtasks=true&include_closed=true&include_timl=true" => """{"tasks":[{"id":"t1","name":"One","status":{"status":"open"}}],"last_page":false}""",
         "list/l1/task?page=1&subtasks=true&include_closed=true&include_timl=true" => """{"tasks":[{"id":"t2","name":"Two","status":{"status":"done"}}],"last_page":true}""",
@@ -42,8 +41,9 @@ using (var api = new ClickUpClient("test-only-placeholder", handler))
     var user = await api.Validate(default); Check(user.Id == "123" && user.Name == "Test User", "Validate numeric user ID");
     Check((await api.Workspaces(default)).Single().Id == "42", "Discover workspace");
     var lists = await api.Lists("42", default);
-    Check(lists.Count == 3 && lists.Single(l => l.Id == "l2").Name == "Engineering / Projects / Inbox", "Folder and folderless paths disambiguate names");
+    Check(lists.Count == 3 && lists.Single(l => l.Id == "l2").Name == "Engineering / Projects / 2026 / Inbox", "Folder hierarchy and folderless paths disambiguate names");
     Check(lists.Count(l => l.Id == "l1") == 1 && lists.Any(l => l.Id == "l3"), "Shared lists included, duplicates and archives excluded");
+    Check(!requests.Any(path => path.StartsWith("folder/", StringComparison.Ordinal)), "Folder discovery uses embedded Lists without one request per Folder");
     Check((await api.Tasks("l1", default)).Count == 2, "Cache loader follows last_page and includes subtasks/closed tasks");
 }
 foreach (var code in new[] { HttpStatusCode.Unauthorized, HttpStatusCode.Forbidden, HttpStatusCode.TooManyRequests, HttpStatusCode.InternalServerError })
