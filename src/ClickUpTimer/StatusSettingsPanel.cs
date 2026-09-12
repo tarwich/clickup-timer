@@ -14,14 +14,14 @@ internal sealed class StatusSettingsPanel : StackPanel
     private bool loading;
     internal StatusSettingsPanel(AppServices services)
     {
-        this.services = services; Margin = new Thickness(16);
-        Children.Add(new TextBlock { Text = "Hide tasks with these statuses", FontSize = 18 });
+        this.services = services; Margin = new Thickness(12);
+        Children.Add(new TextBlock { Text = "Hide tasks with these statuses", FontSize = 14 });
         Children.Add(new TextBlock { Text = "Filters apply to search and recent tasks. The current task stays visible. Done and closed statuses are initially hidden. Save account changes before refreshing this tab.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 8) });
         Children.Add(notice);
-        var refresh = new Button { Content = "Load statuses for saved workspace", Height = 32, Margin = new Thickness(0, 8, 0, 8) };
+        var refresh = new Button { Content = "Load statuses for saved workspace", Height = 28, Margin = new Thickness(0, 8, 0, 8) };
         refresh.Click += async (_, _) => await Load(); Children.Add(refresh);
         Children.Add(groups);
-        var apply = new Button { Content = "Apply status filters", Height = 32, Margin = new Thickness(0, 12, 0, 0) };
+        var apply = new Button { Content = "Apply status filters", Height = 28, Margin = new Thickness(0, 12, 0, 0) };
         apply.Click += (_, _) =>
         {
             if (loading) { notice.Text = "Statuses are still loading."; return; }

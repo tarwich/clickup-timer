@@ -10,10 +10,10 @@ internal sealed class PreferredListPicker : StackPanel
 {
     private const int BrowseLimit = 50;
     private const int SearchLimit = 200;
-    private readonly TextBox search = new() { Height = 32, Padding = new Thickness(7), MaxLength = 300 };
+    private readonly TextBox search = new() { Height = 28, Padding = new Thickness(6, 3, 6, 3), MaxLength = 300 };
     private readonly TextBlock selected = new() { TextWrapping = TextWrapping.Wrap, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 7, 0, 5) };
-    private readonly TextBlock summary = new() { TextWrapping = TextWrapping.Wrap, FontSize = 12, Foreground = Brushes.DimGray, Margin = new Thickness(0, 0, 0, 5) };
-    private readonly ListBox results = new() { DisplayMemberPath = "Name", Height = 150 };
+    private readonly TextBlock summary = new() { TextWrapping = TextWrapping.Wrap, FontSize = 12, Margin = new Thickness(0, 0, 0, 5) };
+    private readonly ListBox results = new() { DisplayMemberPath = "Name", Height = 120 };
     private List<Choice> choices = [];
     private bool updating;
 

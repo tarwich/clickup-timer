@@ -47,7 +47,10 @@ internal static class SettingsFlowChecks
                     check(workspaces.Items.Count == 1 && lists.AvailableCount == 1, "Pasting a key automatically loads workspace and list without Connect click");
                     key.Password = "replacement-fixture-key";
                     check(workspaces.Items.Count == 1 && lists.AvailableCount == 1, "Key changes retain available selections during refresh");
+                    ((ComboBox)window.FindName("Presentation")).SelectedItem = "Minimal";
+                    ((ComboBox)window.FindName("Appearance")).SelectedItem = "Dark";
                     ((Button)window.FindName("ApplyDisplay")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    check(new SettingsStore(path).Load() is { Presentation: "Minimal", Appearance: "Dark" }, "Display apply persists presentation and appearance while account draft is pending");
                     check(File.Exists(Path.Combine(path, "settings.json")), "Display preferences save while account validation is pending");
                     check(!services.Settings.IsConfigured && credentials.Read() is null && key.Password == "replacement-fixture-key", "Applying display preserves unsaved key without committing account draft");
                     failLists = true; account = 2;

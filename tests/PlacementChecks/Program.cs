@@ -39,3 +39,17 @@ foreach (var scale in new[] { 1.0, 1.5, 2.0 })
 }
 Check(Placement.Floating(new Box(0, 0, 1920, 1032), 1, -10, 20).Left == 0, "Floating stale fractions clamp on-screen");
 Console.WriteLine($"{checks} total placement checks passed.");
+
+foreach (var scale in new[] { 1.0, 1.25, 1.5, 2.0 })
+{
+    var bar = new Box(-1920, 1080, 0, 1080 + (int)(48 * scale));
+    foreach (var size in new[] { (155.0, 32.0), (260.0, 32.0), (330.0, 40.0), (410.0, 32.0) })
+    {
+        var placed = Placement.Find(bar, [], scale, null, size.Item1, size.Item2);
+        Check(placed is Box b && b.Width == Math.Ceiling(size.Item1 * scale) && b.Height == Math.Ceiling(size.Item2 * scale), $"Presentation footprint {size} scales correctly at {scale}");
+        var floating = Placement.Floating(new Box(-1920, 0, 0, 1032), scale, 1, 1, size.Item1, size.Item2);
+        Check(floating.Right == 0 && floating.Bottom == 1032 && floating.Width == Math.Ceiling(size.Item1 * scale), "Floating uses the selected presentation dimensions");
+    }
+}
+Check(Placement.Find(new Box(0, 0, 300, 48), [], 1, null, 260, 32) is not null && Placement.Find(new Box(0, 0, 300, 48), [], 1, null, 330, 40) is null, "Compact can fit a gap that rejects Detailed without clipping");
+Console.WriteLine($"{checks} total placement checks passed.");

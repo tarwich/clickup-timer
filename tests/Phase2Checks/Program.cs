@@ -3,6 +3,15 @@ using System.IO;
 using System.Net.Http;
 using ClickUpTimer;
 
+if (args.Contains("--visual-live")) { AppearanceChecks.ShowFixture(); return; }
+if (args.Contains("--timer-live")) { AppearanceChecks.ShowFixture(true); return; }
+
+if (args.Length == 2 && args[0] == "--visual-check")
+{
+    AppearanceChecks.Run((condition, name) => { if (!condition) throw new Exception(name); Console.WriteLine("PASS " + name); }, args[1]);
+    return;
+}
+
 if (args.Contains("--live-read"))
 {
     using var services = new AppServices();
@@ -91,6 +100,7 @@ Check(vault.Read() is null, "Only the isolated test credential is removed");
 await SettingsFlowChecks.Run(Check);
 await TimingChecks.Run(Check);
 await Phase4Checks.Run(Check);
+AppearanceChecks.Run(Check);
 Console.WriteLine($"{checks} application checks passed.");
 
 sealed class FixtureHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler

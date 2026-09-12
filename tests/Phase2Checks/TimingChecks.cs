@@ -21,14 +21,17 @@ internal static class TimingChecks
             check(api.Starts == 0 && !timer.IsRunning, "No server start without selected task");
             await timer.Select(one); await timer.Start();
             check(timer.IsRunning && api.Starts == 1, "Start reconciles the server entry before showing running");
+            var runningEntry = api.CurrentEntry;
+            services.Save(services.Settings with { Presentation = "Minimal", Appearance = "Dark" });
+            check(timer.IsRunning && api.CurrentEntry == runningEntry && api.Starts == 1 && api.Finishes == 0, "Changing appearance and presentation leaves the running entry untouched");
             var accountBlocked = false;
             try { services.Save(services.Settings with { WorkspaceId = "different" }); }
             catch (ClickUpException) { accountBlocked = true; }
             check(accountBlocked && services.Settings.WorkspaceId == "w", "Active timer prevents account changes that would strand recovery");
-            time.Advance(12); check(timer.Elapsed == "00:00:12", "Elapsed derives from server timestamp");
+            time.Advance(12); check(timer.Elapsed == "00m 12s", "Elapsed derives from server timestamp");
             await timer.Stop(); time.Advance(20);
-            check(!timer.IsRunning && timer.Elapsed == "00:00:12", "Confirmed Stop retains completed session duration");
-            await timer.Start(); check(timer.Elapsed == "00:00:00", "Next server Start begins a fresh session");
+            check(!timer.IsRunning && timer.Elapsed == "00m 12s", "Confirmed Stop retains completed session duration");
+            await timer.Start(); check(timer.Elapsed == "00m 00s", "Next server Start begins a fresh session");
             time.Advance(5); await timer.Select(two);
             check(timer.IsRunning && timer.SelectedTask?.Id == "two" && api.Starts == 3 && api.Finishes == 2, "Running task transfer finishes old entry before starting next");
             time.Advance(7); api.Offline = true; await timer.Stop();
@@ -36,7 +39,7 @@ internal static class TimingChecks
             check(saved.Stopping is not null && timer.HasPending && !timer.Online, "Offline Stop persists exact cutoff and remains visibly unconfirmed");
             var cutoff = saved.Stopping!.RequestedAt;
             api.Offline = false; time.Advance(60); timer = NewTimer(); await timer.Refresh();
-            check(!timer.HasPending && timer.Elapsed == "00:00:07" && api.All[saved.Stopping.Entry.Id].End == cutoff, "Restart recovery corrects the original entry to saved stop timestamp");
+            check(!timer.HasPending && timer.Elapsed == "00m 07s" && api.All[saved.Stopping.Entry.Id].End == cutoff, "Restart recovery corrects the original entry to saved stop timestamp");
             await timer.Select(one); api.LoseStartResponse = true; await timer.Start();
             check(timer.HasPending && store.LoadTiming().Starting is not null, "Lost Start response leaves a durable recovery marker");
             var starts = api.Starts;
@@ -50,12 +53,12 @@ internal static class TimingChecks
             var externalStop = api.CurrentEntry!;
             api.All[externalStop.Id] = externalStop with { Duration = 2000, End = externalStop.Start + 2000 };
             time.Advance(10); await timer.Stop();
-            check(!timer.HasPending && !timer.IsRunning && timer.Elapsed == "00:00:02", "Stop after an external stop adopts ClickUp duration instead of getting stuck");
+            check(!timer.HasPending && !timer.IsRunning && timer.Elapsed == "00m 02s", "Stop after an external stop adopts ClickUp duration instead of getting stuck");
             time.Advance(10); await timer.Refresh();
-            check(timer.Elapsed == "00:00:02", "Externally stopped timer stays frozen on subsequent refresh");
+            check(timer.Elapsed == "00m 02s", "Externally stopped timer stays frozen on subsequent refresh");
             api.OmitTaskMetadata = true;
             await timer.Start(); time.Advance(3); await timer.Stop();
-            check(!timer.HasPending && !timer.IsRunning && timer.Elapsed == "00:00:03", "Missing task metadata in singular entry does not block Stop");
+            check(!timer.HasPending && !timer.IsRunning && timer.Elapsed == "00m 03s", "Missing task metadata in singular entry does not block Stop");
             api.OmitTaskMetadata = false;
             await timer.Start(); time.Advance(3);
             var old = api.CurrentEntry!;
@@ -85,7 +88,7 @@ internal static class TimingChecks
             var stopped = new TimeEntry("done", "u", one, day - 20000, 25000, day + 5000, "");
             check(TimingMath.Total([running, stopped, stopped with { Id = "other", UserId = "x" }], running, "u", "one", day, day + 15000) == 20000,
                 "Today clips cross-midnight entries, filters user/task, and never doubles running entry");
-            check(TimingMath.Format(25 * 3600000L) == "25:00:00", "Long sessions keep total hours beyond 24");
+            check(TimingMath.Format(25 * 3600000L) == "1d 1h 00m 00s", "Long sessions use elapsed days and hours");
             var central = TimeZoneInfo.FindSystemTimeZoneById("Central Standard Time");
             var dstDay = TimingMath.DayStart(new DateTimeOffset(2026, 3, 8, 20, 0, 0, TimeSpan.Zero), central);
             check(dstDay == new DateTimeOffset(2026, 3, 8, 6, 0, 0, TimeSpan.Zero).ToUnixTimeMilliseconds(), "Local-day boundary respects daylight-saving transition");

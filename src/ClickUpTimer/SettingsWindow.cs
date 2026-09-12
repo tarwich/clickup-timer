@@ -11,18 +11,21 @@ internal sealed class SettingsWindow : Window
     private readonly AppServices services;
     private readonly StatusSettingsPanel statusFilters;
     private readonly Func<string, ClickUpClient> createClient;
-    private readonly PasswordBox key = new() { Height = 34, Padding = new Thickness(7), MaxLength = 1280 };
-    private readonly ComboBox workspaces = new() { Height = 34, DisplayMemberPath = "Name", SelectedValuePath = "Id" };
+    private readonly PasswordBox key = new() { Height = 28, Padding = new Thickness(6, 3, 6, 3), MaxLength = 1280 };
+    private readonly ComboBox workspaces = new() { Height = 28, DisplayMemberPath = "Name", SelectedValuePath = "Id" };
     private readonly PreferredListPicker lists = new();
-    private readonly ComboBox mode = new() { Height = 34, ItemsSource = new[] { "Taskbar", "Floating" } };
-    private readonly ComboBox monitor = new() { Height = 34, DisplayMemberPath = "Name", SelectedValuePath = "Id" };
-    private readonly CheckBox startup = new() { Content = "Launch ClickUp Timer when I sign in", Margin = new Thickness(0, 16, 0, 0) };
+    private readonly ComboBox mode = new() { Height = 28, ItemsSource = new[] { "Taskbar", "Floating" } };
+    private readonly ComboBox presentation = new() { Height = 28, ItemsSource = new[] { "Minimal", "Compact", "Detailed" } };
+    private readonly ComboBox appearance = new() { Height = 28, ItemsSource = new[] { "System", "Light", "Dark" } };
+    private readonly TimerStrip preview = new();
+    private readonly ComboBox monitor = new() { Height = 28, DisplayMemberPath = "Name", SelectedValuePath = "Id" };
+    private readonly CheckBox startup = new() { Content = "Launch ClickUp Timer when I sign in", Margin = new Thickness(0, 12, 0, 0) };
     private readonly TextBlock connection = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 12, 0, 0) };
     private readonly TextBlock keyStatus = new() { TextWrapping = TextWrapping.Wrap, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 6, 0, 0) };
     private bool hasSavedKey;
-    private readonly TextBlock message = new() { TextWrapping = TextWrapping.Wrap, Foreground = Brushes.Firebrick, Margin = new Thickness(0, 0, 0, 10) };
-    private readonly Button connect = new() { Content = "Connect to ClickUp", Height = 34, Margin = new Thickness(0, 8, 0, 0) };
-    private readonly Button save = new() { Content = "Save settings", Width = 120, Height = 36, IsDefault = true };
+    private readonly TextBlock message = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 10) };
+    private readonly Button connect = new() { Content = "Connect to ClickUp", Height = 28, Margin = new Thickness(0, 8, 0, 0) };
+    private readonly Button save = new() { Content = "Save settings", Width = 120, Height = 28, IsDefault = true };
     private readonly CancellationTokenSource lifetime = new();
     private CancellationTokenSource? listRequest;
     private CancellationTokenSource? connectRequest;
@@ -40,24 +43,22 @@ internal sealed class SettingsWindow : Window
     {
         this.services = services;
         this.createClient = createClient ?? (secret => new ClickUpClient(secret));
-        Title = "ClickUp Timer — Settings"; Width = 600; Height = 710; MinWidth = 480; MinHeight = 560;
+        Title = "ClickUp Timer — Settings"; Width = 520; Height = 580; MinWidth = 440; MinHeight = 400;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        Background = new SolidColorBrush(Color.FromRgb(245, 247, 250));
-        Foreground = new SolidColorBrush(Color.FromRgb(25, 36, 48)); FontFamily = new FontFamily("Segoe UI"); FontSize = 14;
-        var root = new DockPanel { Margin = new Thickness(24) };
-        var title = new StackPanel { Margin = new Thickness(0, 0, 0, 18) };
-        title.Children.Add(new TextBlock { Text = "Make the timer yours", FontSize = 25, FontWeight = FontWeights.SemiBold });
-        title.Children.Add(new TextBlock { Text = "Connect ClickUp and choose where the timer lives.", Margin = new Thickness(0, 6, 0, 0) });
+        Appearance.Attach(this, services);
+        var root = new DockPanel { Margin = new Thickness(12) };
+        var title = new StackPanel { Margin = new Thickness(0, 0, 0, 12) };
+        title.Children.Add(new TextBlock { Text = "Settings", FontSize = 18, FontWeight = FontWeights.SemiBold });
         DockPanel.SetDock(title, Dock.Top); root.Children.Add(title);
         var footer = new StackPanel { Margin = new Thickness(0, 14, 0, 0) };
         footer.Children.Add(message);
         var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-        var cancel = new Button { Content = "Cancel", Width = 90, Height = 36, Margin = new Thickness(0, 0, 8, 0), IsCancel = true };
+        var cancel = new Button { Content = "Cancel", Width = 90, Height = 28, Margin = new Thickness(0, 0, 8, 0), IsCancel = true };
         cancel.Click += (_, _) => Close(); save.Click += (_, _) => Save();
         actions.Children.Add(cancel); actions.Children.Add(save); footer.Children.Add(actions);
         DockPanel.SetDock(footer, Dock.Bottom); root.Children.Add(footer);
         var tabs = new TabControl(); root.Children.Add(tabs);
-        var account = new StackPanel { Margin = new Thickness(16) };
+        var account = new StackPanel { Margin = new Thickness(12) };
         AddLabel(account, "Personal API key"); account.Children.Add(key);
         account.Children.Add(keyStatus);
         account.Children.Add(new TextBlock { Text = "Paste your key to load workspaces automatically. Save settings stores it securely; leave blank to keep your saved key.", TextWrapping = TextWrapping.Wrap, FontSize = 12, Margin = new Thickness(0, 6, 0, 0) });
@@ -65,7 +66,7 @@ internal sealed class SettingsWindow : Window
         AddLabel(account, "Workspace"); account.Children.Add(workspaces);
         AddLabel(account, "Preferred list"); account.Children.Add(lists);
         account.Children.Add(new TextBlock { Text = "New tasks will go into this list. You can save your key and workspace now and choose a list later.", TextWrapping = TextWrapping.Wrap, FontSize = 12, Margin = new Thickness(0, 8, 0, 0) });
-        var refresh = new Button { Content = "Refresh saved task cache", Height = 32, Margin = new Thickness(0, 16, 0, 0) };
+        var refresh = new Button { Content = "Refresh saved task cache", Height = 28, Margin = new Thickness(0, 12, 0, 0) };
         refresh.Click += async (_, _) =>
         {
             refresh.IsEnabled = false;
@@ -74,29 +75,47 @@ internal sealed class SettingsWindow : Window
         };
         account.Children.Add(refresh);
         tabs.Items.Add(new TabItem { Header = "ClickUp account", Content = new ScrollViewer { Content = account, VerticalScrollBarVisibility = ScrollBarVisibility.Auto } });
-        var display = new StackPanel { Margin = new Thickness(16) };
+        var display = new StackPanel { Margin = new Thickness(12) };
+        AddLabel(display, "Appearance"); display.Children.Add(appearance);
+        AddLabel(display, "Presentation"); display.Children.Add(presentation);
+        var previewHost = new Border { Child = preview, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 8, 0, 0) };
+        previewHost.Resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri("/ClickUpTimer;component/Theme.xaml", UriKind.Relative) });
+        preview.IsHitTestVisible = false; preview.Focusable = false;
+        foreach (var control in new[] { preview.Choose, preview.TimeButton, preview.State, preview.Toggle }) control.IsTabStop = false;
+        void Preview()
+        {
+            Appearance.SetPalette(previewHost.Resources, appearance.SelectedItem as string ?? "System");
+            preview.SetPresentation(presentation.SelectedItem as string ?? "Compact");
+            preview.SetState("Design review", "Running", true, false, true, false, true);
+            preview.SetTimes("1h 04m 05s", "2h 08m 10s");
+            preview.Width = preview.Footprint.Width; preview.Height = preview.Footprint.Height;
+        }
+        presentation.SelectionChanged += (_, _) => Preview(); appearance.SelectionChanged += (_, _) => Preview();
+        display.Children.Add(previewHost);
+        display.Children.Add(new TextBlock { Text = "Minimal: time only. Compact: task + time. Detailed: adds state and Today.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0) });
         AddLabel(display, "Timer mode"); display.Children.Add(mode);
         display.Children.Add(new TextBlock { Text = "Taskbar uses an existing empty gap. Floating gives you a movable window above your work.", TextWrapping = TextWrapping.Wrap, FontSize = 12, Margin = new Thickness(0, 8, 0, 0) });
         AddLabel(display, "Monitor"); display.Children.Add(monitor); display.Children.Add(startup);
-        display.Children.Add(new TextBlock { Text = "Drag the dotted grip to move the timer. Each mode remembers its position. If a monitor is disconnected, the timer returns to an available screen.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 18, 0, 0) });
-        var applyDisplay = new Button { Content = "Apply display settings", Height = 36, Margin = new Thickness(0, 18, 0, 0) };
+        display.Children.Add(new TextBlock { Text = "Drag the dotted grip to move the timer. Each mode remembers its position. If a monitor is disconnected, the timer returns to an available screen.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 12, 0, 0) });
+        var applyDisplay = new Button { Content = "Apply display settings", Height = 28, Margin = new Thickness(0, 12, 0, 0) };
         applyDisplay.Click += (_, _) =>
         {
-            try { services.Save(DisplaySettings()); message.Foreground = Brushes.DarkGreen; message.Text = "Display settings applied. Your account draft is still available in the ClickUp tab."; }
-            catch (Exception ex) { message.Foreground = Brushes.Firebrick; message.Text = SafeMessage(ex); }
+            try { services.Save(DisplaySettings()); Appearance.Color(message, TextBlock.ForegroundProperty, "Accent"); message.Text = "Display settings applied. Your account draft is still available in the ClickUp tab."; }
+            catch (Exception ex) { Appearance.Color(message, TextBlock.ForegroundProperty, "Error"); message.Text = SafeMessage(ex); }
         };
         display.Children.Add(applyDisplay);
-        tabs.Items.Add(new TabItem { Header = "Display & startup", Content = display });
+        tabs.Items.Add(new TabItem { Header = "Display & startup", Content = new ScrollViewer { Content = display, VerticalScrollBarVisibility = ScrollBarVisibility.Auto } });
         statusFilters = new StatusSettingsPanel(services);
         tabs.Items.Add(new TabItem { Header = "Ignored statuses", Content = new ScrollViewer { Content = statusFilters, VerticalScrollBarVisibility = ScrollBarVisibility.Auto } });
         Closed += (_, _) => statusFilters.Cancel();
         Content = root;
         NameScope.SetNameScope(this, new NameScope());
         RegisterName("ApiKey", key); RegisterName("Workspaces", workspaces); RegisterName("PreferredList", lists);
-        RegisterName("ApplyDisplay", applyDisplay);
+        RegisterName("ApplyDisplay", applyDisplay); RegisterName("Presentation", presentation); RegisterName("Appearance", appearance);
         RegisterName("KeyStatus", keyStatus); RegisterName("SaveSettings", save); RegisterName("Connect", connect);
         var settings = services.Settings;
         mode.SelectedItem = settings.Mode;
+        presentation.SelectedItem = TimerStrip.Normalize(settings.Presentation); appearance.SelectedItem = Appearance.Normalize(settings.Appearance); Preview();
         var monitors = new List<Choice> { new("", "Primary monitor (automatic)") };
         monitors.AddRange(Forms.Screen.AllScreens.Select((s, i) => new Choice(s.DeviceName, $"Display {i + 1}{(s.Primary ? " (primary)" : "")} — {s.Bounds.Width} × {s.Bounds.Height}")));
         if (settings.Monitor is not null && !monitors.Any(m => m.Id == settings.Monitor)) monitors.Add(new(settings.Monitor, "Saved monitor (disconnected; primary is used)"));
@@ -140,13 +159,13 @@ internal sealed class SettingsWindow : Window
         };
         Closed += (_, _) => { closed = true; keyDelay.Stop(); lifetime.Cancel(); listRequest?.Cancel(); connectRequest?.Cancel(); client?.Dispose(); key.Clear(); validatedKey = null; };
     }
-    private static void AddLabel(Panel panel, string text) => panel.Children.Add(new TextBlock { Text = text, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 16, 0, 6) });
+    private static void AddLabel(Panel panel, string text) => panel.Children.Add(new TextBlock { Text = text, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 12, 0, 6) });
     private async Task Connect()
     {
         var version = ++connectVersion;
         keyDelay.Stop(); connectRequest?.Cancel(); connectRequest?.Dispose(); connectRequest = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
         var cancellation = connectRequest.Token;
-        connecting = true; connect.IsEnabled = false; message.Text = ""; message.Foreground = Brushes.Firebrick;
+        connecting = true; connect.IsEnabled = false; message.Text = ""; Appearance.Color(message, TextBlock.ForegroundProperty, "Error");
         listVersion++; listRequest?.Cancel(); loadingLists = false; client?.Dispose(); client = null; validatedKey = null; validatedUser = null;
         ClickUpClient? candidate = null;
         try
@@ -230,7 +249,7 @@ internal sealed class SettingsWindow : Window
     }
     private void Save()
     {
-        message.Text = ""; message.Foreground = Brushes.Firebrick;
+        message.Text = ""; Appearance.Color(message, TextBlock.ForegroundProperty, "Error");
         if (connecting || keyDelay.IsEnabled) { message.Text = "Your key is still being verified. Please wait a moment, then save."; return; }
         if (key.Password.Length > 0 && validatedKey != key.Password.Trim()) { message.Text = "Connect to validate the key before saving."; return; }
         var next = DisplaySettings();
@@ -251,10 +270,10 @@ internal sealed class SettingsWindow : Window
     private void UpdateKeyStatus()
     {
         keyStatus.Text = key.Password.Length > 0 ? "New key entered — not saved yet" : hasSavedKey ? "✓ API key saved on this PC" : "No API key saved yet";
-        keyStatus.Foreground = key.Password.Length == 0 && hasSavedKey ? Brushes.DarkGreen : Brushes.DimGray;
+        Appearance.Color(keyStatus, TextBlock.ForegroundProperty, key.Password.Length == 0 && hasSavedKey ? "Muted" : "Text");
         key.ToolTip = hasSavedKey ? "A key is saved. Enter a replacement only if you want to change it." : "Enter your personal ClickUp API key.";
     }
-    private AppSettings DisplaySettings() => services.Settings with { Mode = mode.SelectedItem as string ?? "Taskbar", Monitor = string.IsNullOrEmpty(monitor.SelectedValue as string) ? null : monitor.SelectedValue as string, LaunchAtSignIn = startup.IsChecked == true };
+    private AppSettings DisplaySettings() => services.Settings with { Mode = mode.SelectedItem as string ?? "Taskbar", Monitor = string.IsNullOrEmpty(monitor.SelectedValue as string) ? null : monitor.SelectedValue as string, LaunchAtSignIn = startup.IsChecked == true, Presentation = presentation.SelectedItem as string ?? "Compact", Appearance = appearance.SelectedItem as string ?? "System" };
     private static string SafeMessage(Exception ex) => ex switch
     {
         ClickUpException => ex.Message,

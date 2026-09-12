@@ -14,16 +14,16 @@ internal sealed class TimerWindow : Window
 {
     private readonly AppServices services;
     private readonly TimerCoordinator timer;
-    private readonly TextBlock today = new() { FontSize = 10, Foreground = Brushes.LightGray };
+    private readonly TimerStrip strip = new();
     private readonly DispatcherTimer reconcile = new() { Interval = TimeSpan.FromSeconds(15) };
+    private readonly DispatcherTimer pulse = new() { Interval = TimeSpan.FromSeconds(1) };
     private bool quitting, mayClose;
     private readonly WindowPositioner positioning;
     private readonly Forms.NotifyIcon tray;
-    private readonly DispatcherTimer pulse = new() { Interval = TimeSpan.FromMilliseconds(200) };
-    private readonly TextBlock elapsed = new() { Text = "00:00:00", FontFamily = new FontFamily("Consolas"), FontSize = 23, VerticalAlignment = VerticalAlignment.Center };
-    private readonly TextBlock status = new() { Text = "Connecting…", FontSize = 11 };
-    private readonly Button toggle = new() { Content = "▶", ToolTip = "Start logging to ClickUp", Width = 34 };
-    private readonly TextBlock taskName = new() { Text = "Choose task ▴", FontSize = 11, TextTrimming = TextTrimming.CharacterEllipsis };
+    private string? displayedTask;
+    private bool focusSessionDetails;
+    private readonly TextBox details = new() { TextWrapping = TextWrapping.Wrap, IsReadOnly = true, Height = double.NaN, Background = Brushes.Transparent, BorderThickness = new Thickness(0), Padding = new Thickness(0), Margin = new Thickness(0, 4, 0, 8) };
+    private readonly StackPanel recovery = new() { Orientation = Orientation.Horizontal };
     private readonly Popup picker = new() { StaysOpen = false, AllowsTransparency = true, Placement = PlacementMode.Top };
     private readonly TaskPickerPanel pickerPanel;
     private string? taskScope;
@@ -35,14 +35,11 @@ internal sealed class TimerWindow : Window
         timer = new(services);
         Title = "ClickUp Timer"; WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize;
         ShowInTaskbar = inspect; ShowActivated = false; Topmost = true; Width = 336; Height = 40; Left = -10000; Top = -10000;
-        Background = new SolidColorBrush(Color.FromRgb(27, 32, 39)); Foreground = Brushes.White;
+        Appearance.Attach(this, services);
         tray = new Forms.NotifyIcon { Icon = System.Drawing.SystemIcons.Information, Text = "ClickUp Timer", Visible = true };
         positioning = new(this, services, Notice);
         positioning.ShellRestarted += () => { tray.Visible = false; tray.Visible = true; };
-        var panel = new Grid { Margin = new Thickness(8, 1, 6, 1) };
-        foreach (var width in new[] { 18.0, 105, 108, 42, 32 }) panel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(width) });
-        void Add(UIElement element, int col) { Grid.SetColumn(element, col); panel.Children.Add(element); }
-        var grip = new TextBlock { Text = "⠿", FontSize = 20, Foreground = Brushes.Gray, VerticalAlignment = VerticalAlignment.Center, Cursor = Cursors.SizeAll, ToolTip = "Drag to move timer" };
+        var grip = strip.Grip;
         grip.MouseLeftButtonDown += (_, e) =>
         {
             if (services.Settings.Mode == "Floating") positioning.DragFloating();
@@ -51,41 +48,45 @@ internal sealed class TimerWindow : Window
         };
         grip.MouseMove += (_, _) => positioning.Drag();
         grip.MouseLeftButtonUp += (_, _) => { positioning.EndDrag(); grip.ReleaseMouseCapture(); };
-        grip.LostMouseCapture += (_, _) => positioning.EndDrag(); Add(grip, 0);
-        var labels = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        labels.Children.Add(taskName);
-        labels.Children.Add(status);
-        var choose = new Button { Content = labels, Background = Brushes.Transparent, Foreground = Brushes.White, BorderThickness = new Thickness(0), HorizontalContentAlignment = HorizontalAlignment.Stretch, Cursor = Cursors.Hand, ToolTip = "Choose a task" };
-        choose.Click += (_, _) => OpenPicker(); Add(choose, 1);
-        var times = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        elapsed.FontSize = 21;
-        times.Children.Add(elapsed);
-        times.Children.Add(today);
-        Add(times, 2);
-        StyleButton(toggle); toggle.Click += async (_, _) => { if (timer.IsRunning || timer.HasPending) await timer.Stop(); else await timer.Start(); }; Add(toggle, 3);
-        var options = new Button { Content = "⚙", ToolTip = "Settings", Width = 28 }; StyleButton(options); options.Click += (_, _) => OpenSettings(); Add(options, 4);
-        Content = new Border { BorderBrush = new SolidColorBrush(Color.FromRgb(68, 91, 102)), BorderThickness = new Thickness(1), Child = panel };
+        grip.LostMouseCapture += (_, _) => positioning.EndDrag();
+        strip.Choose.Click += (_, _) => OpenPicker();
+        strip.TimeButton.Click += (_, _) => OpenPicker();
+        strip.State.Click += (_, _) => { OpenPicker(); focusSessionDetails = true; FocusDetails(); };
+        strip.Toggle.Click += async (_, _) => { if (timer.IsRunning || timer.HasPending) await timer.Stop(); else await timer.Start(); };
+        strip.FootprintChanged += () => positioning.SetFootprint(strip.Footprint);
+        positioning.SetFootprint(strip.Footprint);
+        Content = strip;
         var menu = new ContextMenu();
         void Item(string name, Action action) { var item = new MenuItem { Header = name }; item.Click += (_, _) => action(); menu.Items.Add(item); }
         Item("Choose task", OpenPicker); Item("Open task in ClickUp", OpenTask);
         Item("Retry ClickUp connection", () => _ = timer.Refresh());
-        Item("Accept ClickUp state…", async () =>
-        {
-            if (MessageBox.Show(timer.ReviewText, "Review timer recovery", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes)
-                await timer.AcceptRemote();
-        });
+        Item("Accept ClickUp state…", Review);
         Item("Settings", OpenSettings); Item("Reset position", positioning.Reset); Item("Save positioning diagnostics", positioning.SaveDiagnostics); Item("Exit", Close);
         pickerPanel = new TaskPickerPanel(services, () => timer.SelectedTask, async task => { await timer.Select(task); if (timer.SelectedTask?.Id == task.Id) picker.IsOpen = false; UpdateTimer(); }, OpenTask);
-        picker.Child = new Border { Width = 440, Background = Brushes.White, BorderBrush = Brushes.SlateGray, BorderThickness = new Thickness(1), Child = pickerPanel };
+        var current = new StackPanel { Margin = new Thickness(12, 8, 12, 0) };
+        var heading = new TextBlock { Text = "Current session", FontWeight = FontWeights.SemiBold };
+        current.Children.Add(heading); current.Children.Add(details);
+        var retry = new Button { Content = "Retry connection", Margin = new Thickness(0, 0, 4, 0) }; retry.Click += async (_, _) => await timer.Refresh();
+        var review = new Button { Content = "Accept ClickUp state…" }; review.Click += (_, _) => Review();
+        recovery.Children.Add(retry); recovery.Children.Add(review); current.Children.Add(recovery);
+        var pickerContent = new StackPanel(); pickerContent.Children.Add(current); pickerContent.Children.Add(pickerPanel);
+        var frame = new Border { Width = 390, BorderThickness = new Thickness(1), Child = new ScrollViewer { Content = pickerContent, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MaxHeight = 600 } };
+        // Popup content has its own visual root. Share the live resource dictionary explicitly.
+        frame.Resources.MergedDictionaries.Add(Resources);
+        frame.SetResourceReference(Border.BackgroundProperty, "Surface"); frame.SetResourceReference(Border.BorderBrushProperty, "Line");
+        picker.Child = frame;
         picker.Closed += (_, _) => pickerPanel.Cancel();
-        picker.PlacementTarget = choose;
+        picker.Opened += (_, _) => { if (focusSessionDetails) FocusDetails(); };
+        frame.PreviewKeyDown += (_, e) => { if (e.Key == Key.Escape) { picker.IsOpen = false; e.Handled = true; } };
+        picker.PlacementTarget = strip;
         ContextMenu = menu;
         var trayMenu = new Forms.ContextMenuStrip();
+        trayMenu.Items.Add("Choose task", null, (_, _) => Dispatcher.Invoke(OpenPicker));
         trayMenu.Items.Add("Settings", null, (_, _) => Dispatcher.Invoke(OpenSettings));
         trayMenu.Items.Add("Reset position", null, (_, _) => Dispatcher.Invoke(positioning.Reset));
         trayMenu.Items.Add("Exit", null, (_, _) => Dispatcher.Invoke(Close));
         tray.ContextMenuStrip = trayMenu; tray.DoubleClick += (_, _) => Dispatcher.Invoke(OpenSettings);
-        pulse.Tick += (_, _) => { elapsed.Text = timer.Elapsed; today.Text = "Today: " + timer.Today; }; pulse.Start();
+        pulse.Tick += (_, _) => UpdateTimer(); pulse.Start();
         timer.Changed += UpdateTimer;
         reconcile.Tick += async (_, _) => await timer.Refresh(); reconcile.Start();
         SystemEvents.SessionSwitch += SessionSwitch;
@@ -104,27 +105,26 @@ internal sealed class TimerWindow : Window
         };
         Closed += (_, _) => { SystemEvents.SessionSwitch -= SessionSwitch; SystemEvents.PowerModeChanged -= PowerChanged; timer.Changed -= UpdateTimer; reconcile.Stop(); picker.IsOpen = false; settingsWindow?.Close(); positioning.Dispose(); pulse.Stop(); tray.Dispose(); services.Changed -= UpdateSummary; services.Dispose(); };
     }
-    private static void StyleButton(Button b)
+    private async void Review()
     {
-        b.Height = 30; b.FontSize = 17; b.Cursor = Cursors.Hand; b.Background = new SolidColorBrush(Color.FromRgb(43, 54, 65));
-        b.Foreground = Brushes.White; b.BorderThickness = new Thickness(0); b.VerticalAlignment = VerticalAlignment.Center;
+        if (MessageBox.Show(timer.ReviewText, "Review timer recovery", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes)
+            await timer.AcceptRemote();
     }
     private void UpdateTimer()
     {
-        taskName.Text = timer.SelectedTask?.Name ?? "Choose task ▴";
-        taskName.ToolTip = timer.SelectedTask?.Name ?? "Choose a task from your preferred list";
-        status.Text = timer.StatusText;
-        status.FontSize = 10;
-        status.Foreground = timer.HasPending || !timer.Online || timer.NeedsReview ? Brushes.Orange : timer.IsRunning ? new SolidColorBrush(Color.FromRgb(102, 235, 181)) : Brushes.LightGray;
-        toggle.Content = timer.IsRunning || timer.HasPending ? "■" : "▶";
-        toggle.IsEnabled = timer.CanRequestStop || (!timer.Busy && (timer.SelectedTask is not null || timer.HasPending || timer.IsRunning));
-        toggle.ToolTip = timer.IsRunning || timer.HasPending ? "Stop logging to ClickUp" : "Start logging to ClickUp";
-        ToolTip = timer.Message ?? "Time is logged directly to ClickUp. Today is your personal task total in the Windows local timezone.";
-        today.Text = "Today: " + timer.Today;
-        elapsed.Text = timer.Elapsed;
+        if (displayedTask != timer.SelectedTask?.Id && !timer.IsRunning) strip.ResetDurationWidth();
+        displayedTask = timer.SelectedTask?.Id;
+        strip.SetState(timer.SelectedTask?.Name ?? "Choose task", timer.StatusText, timer.IsRunning, timer.HasPending, timer.Online, timer.NeedsReview,
+            timer.CanRequestStop || (!timer.Busy && (timer.SelectedTask is not null || timer.HasPending || timer.IsRunning)));
+        strip.SetTimes(timer.Elapsed, timer.Today);
+        details.Text = $"{timer.SelectedTask?.Name ?? "No task selected"}\n{TimerStrip.StateLabel(timer.StatusText)} · {timer.Elapsed}\nToday {timer.Today}" + (timer.Message is { Length: > 0 } message ? "\n" + message : "");
+        ToolTip = details.Text;
+        recovery.Visibility = timer.HasPending || !timer.Online || timer.NeedsReview ? Visibility.Visible : Visibility.Collapsed;
+        recovery.Children[1].Visibility = timer.HasPending || timer.NeedsReview ? Visibility.Visible : Visibility.Collapsed;
     }
     private void UpdateSummary()
     {
+        strip.SetPresentation(services.Settings.Presentation);
         var scope = services.Settings.UserId + "/" + services.Settings.WorkspaceId;
         if (scope != taskScope) { taskScope = scope; _ = timer.Refresh(); }
         UpdateTimer();
@@ -140,7 +140,19 @@ internal sealed class TimerWindow : Window
         if (e.Mode == PowerModes.Suspend) { timer.RequestPause(); _ = timer.Stop(); }
         else if (e.Mode == PowerModes.Resume) _ = timer.Refresh();
     });
-    private void OpenPicker() { Activate(); picker.IsOpen = true; pickerPanel.Open(); }
+    private void OpenPicker()
+    {
+        focusSessionDetails = false;
+        Activate();
+        var screen = Forms.Screen.FromHandle(new System.Windows.Interop.WindowInteropHelper(this).Handle);
+        var dpi = VisualTreeHelper.GetDpi(this).DpiScaleY;
+        if (picker.Child is Border { Child: ScrollViewer scroll }) scroll.MaxHeight = Math.Max(160, screen.WorkingArea.Height / dpi - 16);
+        picker.IsOpen = true; pickerPanel.Open();
+    }
+    private void FocusDetails() => Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() =>
+    {
+        if (picker.IsOpen && focusSessionDetails) { details.BringIntoView(); Keyboard.Focus(details); }
+    }));
     private void LoadPicker() => pickerPanel.Refresh();
     private void OpenTask()
     {

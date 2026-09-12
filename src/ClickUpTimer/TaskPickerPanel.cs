@@ -11,11 +11,11 @@ internal sealed class TaskPickerPanel : StackPanel
     private readonly Func<TaskSummary?> active;
     private readonly Func<TaskSummary, Task> select;
     private readonly Func<ClickUpClient> createClient;
-    private readonly TextBox query = new() { Height = 32, Padding = new Thickness(6), MaxLength = 500 };
+    private readonly TextBox query = new() { Height = 28, Padding = new Thickness(6, 3, 6, 3), MaxLength = 500 };
     private readonly ListBox results = new() { DisplayMemberPath = "Label", MaxHeight = 250, MinHeight = 65 };
     private readonly TextBlock notice = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 6) };
-    private readonly Button search = new() { Content = "Search workspace", Height = 30 };
-    private readonly Button create = new() { Height = 32 };
+    private readonly Button search = new() { Content = "Search workspace", Height = 28 };
+    private readonly Button create = new() { Height = 28 };
     private readonly List<TaskSummary> workspace = [];
     private CancellationTokenSource? request;
     private string? scope;
@@ -27,23 +27,41 @@ internal sealed class TaskPickerPanel : StackPanel
         this.createClient = createClient ?? (() => new(services.Credentials.Read() ?? throw new ClickUpException("Connect an API key in Settings first.")));
         NameScope.SetNameScope(this, new NameScope());
         RegisterName("SearchText", query); RegisterName("CreateTask", create); RegisterName("Notice", notice);
-        Margin = new Thickness(14); SetValue(TextBlock.ForegroundProperty, Brushes.Black);
-        Children.Add(new TextBlock { Text = "Choose a task", FontSize = 18, FontWeight = FontWeights.SemiBold });
-        Children.Add(new TextBlock { Text = "Search names or IDs in your preferred list and recent tasks", Margin = new Thickness(0, 6, 0, 4), TextWrapping = TextWrapping.Wrap });
+        Margin = new Thickness(12);
+        Children.Add(new TextBlock { Text = "Tasks", FontSize = 14, FontWeight = FontWeights.SemiBold });
+        Children.Add(new TextBlock { Text = "Search task names or IDs", Margin = new Thickness(0, 6, 0, 4), TextWrapping = TextWrapping.Wrap });
         Children.Add(query); Children.Add(notice); Children.Add(results);
+        query.KeyDown += (_, e) => { if (e.Key == Key.Down && results.Items.Count > 0) { results.SelectedIndex = Math.Max(0, results.SelectedIndex); results.Focus(); e.Handled = true; } else if (e.Key == Key.Enter) { if (results.SelectedIndex < 0 && results.Items.Count > 0) results.SelectedIndex = 0; Choose(); e.Handled = true; } };
+        // Ellipsize long names instead of allowing the list to force a wider popup.
+        results.DisplayMemberPath = "";
+        var row = new FrameworkElementFactory(typeof(TextBlock));
+        row.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding("Label"));
+        row.SetBinding(TextBlock.ToolTipProperty, new System.Windows.Data.Binding("Label"));
+        row.SetValue(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis);
+        results.ItemTemplate = new DataTemplate { VisualTree = row };
+        results.Loaded += (_, _) =>
+        {
+            var itemStyle = new Style(typeof(ListBoxItem), results.TryFindResource(typeof(ListBoxItem)) as Style);
+            itemStyle.Setters.Add(new Setter(System.Windows.Automation.AutomationProperties.NameProperty, new System.Windows.Data.Binding("Label")));
+            results.ItemContainerStyle = itemStyle;
+        };
         query.TextChanged += (_, _) => Refresh();
         results.MouseDoubleClick += (_, _) => Choose();
         results.KeyDown += (_, e) => { if (e.Key == Key.Enter) { Choose(); e.Handled = true; } };
-        var use = new Button { Content = "Use selected task", Height = 30, Margin = new Thickness(0, 6, 0, 6) };
-        use.Click += (_, _) => Choose(); Children.Add(use);
-        search.Click += async (_, _) => await SearchWorkspace(); Children.Add(search);
+        var use = new Button { Content = "Use selected task", Height = 28, Margin = new Thickness(0, 6, 0, 6) };
+        var actions = new Grid { Margin = new Thickness(0, 6, 0, 0) };
+        actions.ColumnDefinitions.Add(new ColumnDefinition()); actions.ColumnDefinitions.Add(new ColumnDefinition());
+        use.Margin = new Thickness(0, 0, 4, 0); actions.Children.Add(use);
+        use.Click += (_, _) => Choose(); Children.Add(actions);
+        search.Click += async (_, _) => await SearchWorkspace(); Grid.SetColumn(search, 1); actions.Children.Add(search);
         create.Margin = new Thickness(0, 6, 0, 6);
         create.Click += async (_, _) => await Create(); Children.Add(create);
-        var open = new Button { Content = "Open current task in ClickUp", Height = 28 };
-        open.Click += (_, _) => openTask(); Children.Add(open);
-        var refresh = new Button { Content = "Refresh preferred list", Height = 28, Margin = new Thickness(0, 6, 0, 0) };
-        refresh.Click += async (_, _) => { refresh.IsEnabled = false; await services.RefreshCache(); refresh.IsEnabled = true; Refresh(); };
-        Children.Add(refresh);
+        var more = new Button { Content = "More actions", HorizontalAlignment = HorizontalAlignment.Left, BorderThickness = new Thickness(0) };
+        var menu = new ContextMenu();
+        var open = new MenuItem { Header = "Open current task in ClickUp" }; open.Click += (_, _) => openTask(); menu.Items.Add(open);
+        var refresh = new MenuItem { Header = "Refresh preferred list" };
+        refresh.Click += async (_, _) => { refresh.IsEnabled = false; await services.RefreshCache(); refresh.IsEnabled = true; Refresh(); }; menu.Items.Add(refresh);
+        more.ContextMenu = menu; more.Click += (_, _) => { menu.PlacementTarget = more; menu.IsOpen = true; }; Children.Add(more);
     }
     private async void Choose()
     {
@@ -67,8 +85,9 @@ internal sealed class TaskPickerPanel : StackPanel
         results.ItemsSource = rows;
         results.SelectedItem = rows.FirstOrDefault(r => r.Task.Id == selected);
         notice.Text = !settings.IsConfigured ? "Choose a preferred list in Settings first."
-            : $"{rows.Count} shown · {settings.PreferredListName}\n" + (searchStatus.Length > 0 ? searchStatus : cache is null ? "Preferred list not loaded yet. Refresh to load it." : "Preferred list and recent tasks searched first.");
+            : $"{rows.Count} shown · {settings.PreferredListName}\n" + (searchStatus.Length > 0 ? searchStatus : cache is null ? "Preferred list not loaded yet. Refresh to load it." : "");
         if (services.CacheNotice?.Contains("could not") == true) notice.Text += "\nConnection failed; cached results may be out of date.";
+        create.Visibility = string.IsNullOrWhiteSpace(query.Text) ? Visibility.Collapsed : Visibility.Visible;
         create.Content = "Create task in " + (settings.PreferredListName ?? "preferred list");
         create.IsEnabled = settings.IsConfigured && !creating && !string.IsNullOrWhiteSpace(query.Text);
         search.IsEnabled = settings.IsConfigured && request is null && !creating;

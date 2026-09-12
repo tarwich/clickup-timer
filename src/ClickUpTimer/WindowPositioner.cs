@@ -19,6 +19,15 @@ internal sealed class WindowPositioner : IDisposable
     private Box? position;
     private nint handle, originalOwner;
     private bool visible, dragging, nativeDragging, disposed;
+    private Size footprint = new(336, 40);
+    internal void SetFootprint(Size value)
+    {
+        if (footprint == value) return;
+        footprint = value;
+        // An old gap cannot validate a changed footprint during shell discovery failure.
+        if (handle != 0) { Native.ShowWindow(handle, 0); visible = false; position = null; }
+        Refresh();
+    }
     private Native.Point dragOffset;
     private uint taskbarCreated;
     private int diagnosticsTicks;
@@ -82,7 +91,7 @@ internal sealed class WindowPositioner : IDisposable
         {
             var screen = Screen;
             var scale = snapshots.FirstOrDefault(b => b.Device == screen.DeviceName)?.Scale ?? Math.Max(96, Native.GetDpiForWindow(handle)) / 96.0;
-            Apply(Placement.Floating(Work(screen), scale, config.FloatingX, config.FloatingY), originalOwner);
+            Apply(Placement.Floating(Work(screen), scale, config.FloatingX, config.FloatingY, footprint.Width, footprint.Height), originalOwner);
             return;
         }
         selected = snapshots.FirstOrDefault(b => b.Device == config.Monitor) ?? snapshots.FirstOrDefault(b => b.Primary) ?? snapshots.FirstOrDefault();
@@ -92,7 +101,7 @@ internal sealed class WindowPositioner : IDisposable
             return;
         }
         var x = selected.Bounds.Left + (int)Math.Round(selected.Bounds.Width * config.TaskbarX);
-        var candidate = Placement.Find(selected.Bounds, selected.Occupied, selected.Scale, x);
+        var candidate = Placement.Find(selected.Bounds, selected.Occupied, selected.Scale, x, footprint.Width, footprint.Height);
         if (candidate is null) { Hide("No safe taskbar gap. Choose Floating in Settings."); return; }
         Apply(candidate.Value, (nint)selected.Handle);
     }
@@ -156,7 +165,7 @@ internal sealed class WindowPositioner : IDisposable
             var screen = Forms.Screen.FromPoint(new System.Drawing.Point(p.X, p.Y));
             var work = Work(screen);
             var scale = snapshots.FirstOrDefault(b => b.Device == screen.DeviceName)?.Scale ?? Math.Max(96, Native.GetDpiForWindow(handle)) / 96.0;
-            var size = Placement.Floating(work, scale, 0, 0);
+            var size = Placement.Floating(work, scale, 0, 0, footprint.Width, footprint.Height);
             var x = Math.Clamp(p.X - dragOffset.X, work.Left, Math.Max(work.Left, work.Right - size.Width));
             var y = Math.Clamp(p.Y - dragOffset.Y, work.Top, Math.Max(work.Top, work.Bottom - size.Height));
             Apply(new(x, y, x + size.Width, y + size.Height), originalOwner);
@@ -165,7 +174,7 @@ internal sealed class WindowPositioner : IDisposable
         {
             var target = snapshots.FirstOrDefault(b => b.Bounds.Contains(p.X, p.Y)) ?? selected;
             if (target is not { Reliable: true }) return;
-            var candidate = Placement.Find(target.Bounds, target.Occupied, target.Scale, p.X - dragOffset.X);
+            var candidate = Placement.Find(target.Bounds, target.Occupied, target.Scale, p.X - dragOffset.X, footprint.Width, footprint.Height);
             if (candidate is Box box) { selected = target; Apply(box, (nint)target.Handle); }
         }
     }

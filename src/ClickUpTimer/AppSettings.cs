@@ -3,9 +3,17 @@ using System.Text.Json;
 
 namespace ClickUpTimer;
 
+internal static class DisplayPreferences
+{
+    internal static string NormalizePresentation(string? value) => value is "Minimal" or "Detailed" ? value : "Compact";
+    internal static string NormalizeAppearance(string? value) => value is "Light" or "Dark" ? value : "System";
+}
+
 internal sealed record AppSettings
 {
     public int Version { get; init; } = 1;
+    public string Presentation { get; init; } = "Compact";
+    public string Appearance { get; init; } = "System";
     public string Mode { get; init; } = "Taskbar";
     public string? Monitor { get; init; }
     public double TaskbarX { get; init; }
@@ -43,7 +51,7 @@ internal sealed class SettingsStore
                 var result = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(file)) ?? throw new JsonException();
                 if (result.Version != 1) throw new JsonException();
                 static double Fraction(double v, double fallback) => double.IsFinite(v) && v >= 0 && v <= 1 ? v : fallback;
-                return result with { Mode = result.Mode == "Floating" ? "Floating" : "Taskbar", TaskbarX = Fraction(result.TaskbarX, 0), FloatingX = Fraction(result.FloatingX, .05), FloatingY = Fraction(result.FloatingY, .85) };
+                return result with { Presentation = DisplayPreferences.NormalizePresentation(result.Presentation), Appearance = DisplayPreferences.NormalizeAppearance(result.Appearance), Mode = result.Mode == "Floating" ? "Floating" : "Taskbar", TaskbarX = Fraction(result.TaskbarX, 0), FloatingX = Fraction(result.FloatingX, .05), FloatingY = Fraction(result.FloatingY, .85) };
             }
             var legacy = Path.Combine(directory, "prototype", "placement.json");
             if (File.Exists(legacy))

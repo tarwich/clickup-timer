@@ -32,8 +32,12 @@ internal static class TimingMath
 {
     internal static string Format(long milliseconds)
     {
-        var span = TimeSpan.FromMilliseconds(Math.Max(0, milliseconds));
-        return $"{(long)span.TotalHours:00}:{span.Minutes:00}:{span.Seconds:00}";
+        var seconds = Math.Max(0, milliseconds) / 1000;
+        var weeks = seconds / 604800;
+        var days = seconds / 86400 % 7;
+        var hours = seconds / 3600 % 24;
+        var prefix = weeks > 0 ? $"{weeks}w {days}d {hours}h " : days > 0 ? $"{days}d {hours}h " : hours > 0 ? $"{hours}h " : "";
+        return prefix + $"{seconds / 60 % 60:00}m {seconds % 60:00}s";
     }
     internal static long DayStart(DateTimeOffset now, TimeZoneInfo zone)
     {

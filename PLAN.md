@@ -113,6 +113,17 @@ Phase 5 implementation: server-backed entries, durable start/stop intent, entry-
 - [x] Complete a live smoke test after the user enters their key in the app: select/create a task, log a short session, and verify the entry in ClickUp.
 - [ ] Deliver the executable, source, and setup instructions.
 
+## Beautification pass — 2026-09-12
+
+- [x] Add shared System/Light/Dark resources, smaller typography, tighter dialogs, and monochrome controls while retaining native WPF.
+- [x] Add Minimal, Compact (default), and Detailed presentations with a live settings preview and safe size-aware placement.
+- [x] Format elapsed durations as `1w 2d 3h 04m 05s`, pad minutes/seconds, and keep ordinary ticking from shifting controls.
+- [x] Keep full session details and recovery accessible through the picker, status icon, and tray menu.
+- [x] Pass 146 application checks and 56 placement checks; inspect rendered Light/Dark views and isolated live native controls without ClickUp writes.
+- [ ] Complete physical DPI/monitor/high-contrast/taskbar occupancy checks and controlled long-duration performance comparison.
+
+See [BEAUTIFICATION_PLAN.md](BEAUTIFICATION_PLAN.md) for the design and detailed verification record.
+
 ## References
 
 - [Windows topmost window positioning](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowpos)
