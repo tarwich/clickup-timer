@@ -36,7 +36,7 @@ internal sealed class TimerCoordinator
     internal TimerCoordinator(AppServices services, Func<ITimingApi>? createApi = null, TimeProvider? clock = null)
     {
         this.services = services; this.clock = clock ?? TimeProvider.System;
-        this.createApi = createApi ?? (() => new ClickUpClient(services.Credentials.Read() ?? throw new ClickUpException("Save an API key in Settings first.")));
+        this.createApi = createApi ?? services.CreateClient;
         try { state = services.Store.LoadTiming(); }
         catch (Exception) { state = new(); corrupt = true; Message = "Saved timer recovery data could not be read. Review ClickUp, then use Accept ClickUp state."; }
         services.ValidateAccountChange = () => CanChangeAccount ? null : "Stop and confirm the current timer before changing account, workspace, or API key.";

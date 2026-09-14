@@ -7,14 +7,20 @@ A compact Windows timer in the unused part of the existing taskbar, with optiona
 Launch `artifacts/phase2/ClickUpTimer.exe` or `./Run-Timer.ps1`. The existing launch path is retained for upgrades. Keep the published folder together; it includes the .NET runtime.
 
 1. Open Settings from the timer's right-click menu or notification-area icon.
-2. Paste your personal API key. Workspaces and lists load automatically. Folder responses are consumed as hierarchy batches, avoiding a separate request for every Folder. Saved keys display an explicit indicator without exposing the secret.
-3. Choose a workspace. Search the full Space / Folder / List path or list ID, select a preferred list, then Save settings. The selected list stays visible while results load, and broad result sets are capped to keep Settings responsive.
-4. Click the task name on the timer to choose a task. Type to filter names and IDs locally; use **Search workspace** to load wider results progressively.
+2. In the MCP preview, click **Connect to ClickUp** and finish browser authorization. There is no API-key entry field. OAuth credentials are encrypted for your Windows user.
+3. Choose a workspace, type to search for a list, select it, then Save settings. Cached lists appear immediately. Typing pauses for 650 ms before querying ClickUp; the selected list stays selected as results arrive.
+4. Click the task name on the timer to choose a task. The **Current list / Entire workspace** switch selects the search scope and stays set across restarts. Typing filters cached tasks immediately and automatically searches ClickUp after the same short pause.
 5. Press Start to log time. Stop retains the completed duration. Selecting another task while running finishes the old entry before starting the new one. Selecting while stopped stays stopped.
 
 Eight recent tasks are saved across restarts. **Create task in [preferred list]** uses the search text as the title and creates a real, unassigned task with the list's initial status. Creation failures retain your text; after an uncertain connection failure, refresh and check whether the task was created before retrying.
 
-Settings → **Ignored statuses** lists checkboxes grouped by list. Checked statuses are hidden from recent tasks and searches; the current task stays visible. Done/closed status types are initially hidden. Save settings or Apply status filters stores changes. Save account changes before loading statuses for a different workspace.
+Settings → **Ignored statuses** lists checkboxes for the saved list and previously discovered lists. Checked statuses are hidden from recent tasks and searches; the current task stays visible. Done/closed status types are initially hidden. Save settings or Apply status filters stores changes. Save account changes before loading statuses for a different workspace.
+
+Remote MCP search is only called while a user is searching in a picker. Opening a picker, startup, timing reconciliation, cache refresh, and status discovery never call it. Empty queries, changed queries, and closed pickers cancel pending searches. All received items are cached by account and workspace; quota errors retain cached results without a background retry or workspace crawl.
+
+Live MCP authorization and list discovery are verified. ClickUp's actual search schema does not support Lists, so the list picker uses the MCP workspace hierarchy tool, filters paths locally, and reuses each hierarchy page for ten minutes during user searches. Task search uses `clickup_search` and its advertised list-location filter. Account connection status is displayed separately from search results.
+
+The app is OAuth-only and never falls back to a saved API key. The live MCP token was rejected by the public REST API. Separate REST OAuth authorization is still required before timer operations, task hydration/creation, and status loading can resume; that flow is not yet implemented. Settings reports search connectivity without claiming timer authorization.
 
 ## Timing and recovery
 
@@ -46,8 +52,10 @@ Opening Start does not intentionally hide the timer. It retains its last verifie
 
 - `%LOCALAPPDATA%\ClickUpTimer\settings.json`: account/list preferences, eight recent tasks, per-list status filters, display/startup preferences; no API key.
 - `task-cache.json` in the same directory: account/list-scoped cached tasks.
+- `search-<scope hash>.json`: merged list/task/other search discoveries, isolated by user and workspace.
+- `clickup-oauth.bin`: OAuth session encrypted with Windows DPAPI; no plaintext token in settings or logs.
 - `timer-state.json`: selected task, last server entry, and durable pending start/stop requests. Writes are flushed before server mutations.
-- Windows Credential Manager generic credential `ClickUpTimer/PersonalApiKey`: the API key for this Windows user.
+- Windows Credential Manager may still contain the previous `ClickUpTimer/PersonalApiKey` credential during migration; this build does not read it for API calls and removes it after successful timer OAuth authorization.
 - `prototype/diagnostics.json`: positioning diagnostics; no credentials or taskbar-button names.
 
 ## Build and verification
@@ -56,11 +64,11 @@ Install .NET 10 SDK and run `./Build-Timer.ps1`. The script prefers `%LOCALAPPDA
 
 To build alongside a running installation, use `./Build-Timer.ps1 -OutputDirectory artifacts/beautification`. Exit the current app from its tray menu before launching `artifacts/beautification/ClickUpTimer.exe`. Keep the published directory together. If you use launch at sign-in, re-save that setting from the new executable location.
 
-146 application checks cover account setup, batched hierarchy discovery, large-workspace list search, persistence, MRU/filtering, task creation, timing API payloads, task transfers, duplicate operations, lost responses, offline/restart stop recovery, external conflicts, rate-limit backoff, midnight/DST totals, presentation settings, and duration formatting/layout. There are also 56 placement geometry checks.
+172 application checks cover OAuth storage and state validation, MCP transport, user-triggered debouncing and cancellation, persisted scope, cached list/task discovery, account isolation, MRU/filtering, task creation, timing recovery, rate-limit backoff, midnight/DST totals, and appearance/layout. There are also 56 placement geometry checks. Live MCP verification found both Project lists for `Proje`, cached three lists, and reused the hierarchy response for a second query. Multi-page hierarchy and live task search still require verification.
 
 Generate fixture-based WPF preview images with `dotnet run --project tests/Phase2Checks -c Release -- --visual-check artifacts/beautification-review`. The `--visual-live` and `--timer-live` test-runner options open isolated interactive UI fixtures without the user's credentials or ClickUp writes. Rendered scale previews supplement physical DPI testing; they do not replace it.
 
-Live task search, status discovery, and user-confirmed task creation work. Read-only timing authentication and current-entry/history queries passed. Live Start/Stop has been clicked and verified against the server. Physical lock/sleep tests remain part of the final smoke test. Monitor disconnect/reconnect and actual display-scale changes also remain deferred hardware checks. Use `./Run-Timer.ps1 -Inspect` to expose a timer taskbar button for desktop automation.
+Before the OAuth migration, live task search, status discovery, task creation, and timer Start/Stop were verified. Those checks do not establish compatibility with the new authorization flow; REST operations currently await separate OAuth authorization. Physical lock/sleep, monitor disconnect/reconnect, and actual display-scale changes remain deferred hardware checks. Use `./Run-Timer.ps1 -Inspect` to expose a timer taskbar button for desktop automation.
 
 ## Code organization
 

@@ -17,7 +17,7 @@ internal static class TaskCatalog
     internal static List<RecentTask> Remember(AppSettings settings, TaskSummary task) =>
         new[] { new RecentTask(settings.UserId!, settings.WorkspaceId!, task with { ListId = task.ListId ?? settings.PreferredListId }) }
         .Concat(settings.RecentTasks.Where(r => r.UserId == settings.UserId && r.WorkspaceId == settings.WorkspaceId && r.Task.Id != task.Id)).Take(8).ToList();
-    internal static List<TaskRow> Filter(AppSettings settings, IEnumerable<TaskSummary> preferred, IEnumerable<TaskSummary> workspace, string query, TaskSummary? active)
+    internal static List<TaskRow> Filter(AppSettings settings, IEnumerable<TaskSummary> preferred, IEnumerable<TaskSummary> workspace, string query, TaskSummary? active, IReadOnlySet<string>? remoteMatches = null)
     {
         var fresh = workspace.Concat(preferred).DistinctBy(t => t.Id).ToDictionary(t => t.Id);
         var rows = new List<TaskRow>();
@@ -28,7 +28,7 @@ internal static class TaskCatalog
         rows.AddRange(workspace.OrderBy(t => t.Name).Select(t => new TaskRow(t, "Workspace")));
         query = query.Trim();
         return rows.Where(r => r.Group == "Current" || (!Ignored(settings, r.Task) &&
-            (r.Task.Name.Contains(query, StringComparison.OrdinalIgnoreCase) || r.Task.Id.Contains(query, StringComparison.OrdinalIgnoreCase))))
+            (remoteMatches?.Contains(r.Task.Id) == true || r.Task.Name.Contains(query, StringComparison.OrdinalIgnoreCase) || r.Task.Id.Contains(query, StringComparison.OrdinalIgnoreCase))))
             .DistinctBy(r => r.Task.Id).ToList();
     }
 }

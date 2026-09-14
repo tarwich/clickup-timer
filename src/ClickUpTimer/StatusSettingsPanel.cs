@@ -50,8 +50,9 @@ internal sealed class StatusSettingsPanel : StackPanel
         loading = true; loadedScope = Scope(); groups.Children.Clear(); checks.Clear(); notice.Text = "Loading list statuses…";
         try
         {
-            using var client = new ClickUpClient(services.Credentials.Read() ?? throw new ClickUpException("Save an API key first."));
-            var lists = await client.Lists(settings.WorkspaceId!, stop.Token);
+            using var client = services.CreateClient();
+            var lists = services.SearchCache.Read(settings.UserId!, settings.WorkspaceId!).Where(i => i.Type == "list").Select(i => i.Choice)
+                .Prepend(new Choice(settings.PreferredListId!, settings.PreferredListName ?? settings.PreferredListId!)).DistinctBy(i => i.Id).ToList();
             foreach (var list in lists)
             {
                 var statuses = await client.Statuses(list.Id, stop.Token);

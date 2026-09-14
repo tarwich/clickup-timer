@@ -1,17 +1,19 @@
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Media;
-using System.Windows.Threading;
 using Forms = System.Windows.Forms;
 
 namespace ClickUpTimer;
+
+internal sealed record ConnectedAccount(ClickUpUser User, List<Choice> Workspaces, bool RestAuthorized = true);
 
 internal sealed class SettingsWindow : Window
 {
     private readonly AppServices services;
     private readonly StatusSettingsPanel statusFilters;
-    private readonly Func<string, ClickUpClient> createClient;
-    private readonly PasswordBox key = new() { Height = 28, Padding = new Thickness(6, 3, 6, 3), MaxLength = 1280 };
+    private readonly Func<CancellationToken, Task<ConnectedAccount>> connectAccount;
+    private readonly IClickUpSearch search;
+    private readonly InteractiveSearch interaction = new();
+    private readonly CancellationTokenSource lifetime = new();
     private readonly ComboBox workspaces = new() { Height = 28, DisplayMemberPath = "Name", SelectedValuePath = "Id" };
     private readonly PreferredListPicker lists = new();
     private readonly ComboBox mode = new() { Height = 28, ItemsSource = new[] { "Taskbar", "Floating" } };
@@ -20,29 +22,18 @@ internal sealed class SettingsWindow : Window
     private readonly TimerStrip preview = new();
     private readonly ComboBox monitor = new() { Height = 28, DisplayMemberPath = "Name", SelectedValuePath = "Id" };
     private readonly CheckBox startup = new() { Content = "Launch ClickUp Timer when I sign in", Margin = new Thickness(0, 12, 0, 0) };
-    private readonly TextBlock connection = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 12, 0, 0) };
-    private readonly TextBlock keyStatus = new() { TextWrapping = TextWrapping.Wrap, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 6, 0, 0) };
-    private bool hasSavedKey;
+    private readonly TextBlock connection = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 10, 0, 0) };
+    private readonly TextBlock searchNotice = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 5, 0, 0) };
     private readonly TextBlock message = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 10) };
-    private readonly Button connect = new() { Content = "Connect to ClickUp", Height = 28, Margin = new Thickness(0, 8, 0, 0) };
+    private readonly Button connect = new() { Content = "Connect to ClickUp", Height = 30, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 8, 0, 0) };
     private readonly Button save = new() { Content = "Save settings", Width = 120, Height = 28, IsDefault = true };
-    private readonly CancellationTokenSource lifetime = new();
-    private CancellationTokenSource? listRequest;
-    private CancellationTokenSource? connectRequest;
-    private readonly DispatcherTimer keyDelay = new() { Interval = TimeSpan.FromMilliseconds(700) };
-    private readonly Dictionary<string, List<Choice>> listChoices = [];
-    private string? loadedListScope;
-    private bool updatingWorkspaces;
-    private ClickUpClient? client;
-    private ClickUpUser? validatedUser;
-    private string? validatedKey;
-    private int connectVersion, listVersion;
-    private bool connecting, loadingLists, closed;
-
-    internal SettingsWindow(AppServices services, Func<string, ClickUpClient>? createClient = null)
+    private ClickUpUser? user;
+    private bool updating, connecting, closed;
+    private int connectionVersion;
+    internal SettingsWindow(AppServices services, Func<CancellationToken, Task<ConnectedAccount>>? connectAccount = null, IClickUpSearch? search = null)
     {
-        this.services = services;
-        this.createClient = createClient ?? (secret => new ClickUpClient(secret));
+        this.services = services; this.connectAccount = connectAccount ?? services.ConnectAccount;
+        this.search = search ?? services.Search;
         Title = "ClickUp Timer — Settings"; Width = 520; Height = 580; MinWidth = 440; MinHeight = 400;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         Appearance.Attach(this, services);
@@ -50,8 +41,7 @@ internal sealed class SettingsWindow : Window
         var title = new StackPanel { Margin = new Thickness(0, 0, 0, 12) };
         title.Children.Add(new TextBlock { Text = "Settings", FontSize = 18, FontWeight = FontWeights.SemiBold });
         DockPanel.SetDock(title, Dock.Top); root.Children.Add(title);
-        var footer = new StackPanel { Margin = new Thickness(0, 14, 0, 0) };
-        footer.Children.Add(message);
+        var footer = new StackPanel { Margin = new Thickness(0, 14, 0, 0) }; footer.Children.Add(message);
         var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
         var cancel = new Button { Content = "Cancel", Width = 90, Height = 28, Margin = new Thickness(0, 0, 8, 0), IsCancel = true };
         cancel.Click += (_, _) => Close(); save.Click += (_, _) => Save();
@@ -59,21 +49,12 @@ internal sealed class SettingsWindow : Window
         DockPanel.SetDock(footer, Dock.Bottom); root.Children.Add(footer);
         var tabs = new TabControl(); root.Children.Add(tabs);
         var account = new StackPanel { Margin = new Thickness(12) };
-        AddLabel(account, "Personal API key"); account.Children.Add(key);
-        account.Children.Add(keyStatus);
-        account.Children.Add(new TextBlock { Text = "Paste your key to load workspaces automatically. Save settings stores it securely; leave blank to keep your saved key.", TextWrapping = TextWrapping.Wrap, FontSize = 12, Margin = new Thickness(0, 6, 0, 0) });
+        account.Children.Add(new TextBlock { Text = "Sign in securely in your browser to connect ClickUp.", TextWrapping = TextWrapping.Wrap });
         account.Children.Add(connect); account.Children.Add(connection);
         AddLabel(account, "Workspace"); account.Children.Add(workspaces);
-        AddLabel(account, "Preferred list"); account.Children.Add(lists);
-        account.Children.Add(new TextBlock { Text = "New tasks will go into this list. You can save your key and workspace now and choose a list later.", TextWrapping = TextWrapping.Wrap, FontSize = 12, Margin = new Thickness(0, 8, 0, 0) });
-        var refresh = new Button { Content = "Refresh saved task cache", Height = 28, Margin = new Thickness(0, 12, 0, 0) };
-        refresh.Click += async (_, _) =>
-        {
-            refresh.IsEnabled = false;
-            await services.RefreshCache();
-            if (!closed) { connection.Text = services.CacheNotice ?? "Connect and save a preferred list first."; refresh.IsEnabled = true; }
-        };
-        account.Children.Add(refresh);
+        AddLabel(account, "Current list"); account.Children.Add(lists);
+        account.Children.Add(searchNotice);
+        account.Children.Add(new TextBlock { Text = "New tasks go into your selected list.", TextWrapping = TextWrapping.Wrap, FontSize = 12, Margin = new Thickness(0, 8, 0, 0) });
         tabs.Items.Add(new TabItem { Header = "ClickUp account", Content = new ScrollViewer { Content = account, VerticalScrollBarVisibility = ScrollBarVisibility.Auto } });
         var display = new StackPanel { Margin = new Thickness(12) };
         AddLabel(display, "Appearance"); display.Children.Add(appearance);
@@ -107,12 +88,12 @@ internal sealed class SettingsWindow : Window
         tabs.Items.Add(new TabItem { Header = "Display & startup", Content = new ScrollViewer { Content = display, VerticalScrollBarVisibility = ScrollBarVisibility.Auto } });
         statusFilters = new StatusSettingsPanel(services);
         tabs.Items.Add(new TabItem { Header = "Ignored statuses", Content = new ScrollViewer { Content = statusFilters, VerticalScrollBarVisibility = ScrollBarVisibility.Auto } });
-        Closed += (_, _) => statusFilters.Cancel();
         Content = root;
         NameScope.SetNameScope(this, new NameScope());
-        RegisterName("ApiKey", key); RegisterName("Workspaces", workspaces); RegisterName("PreferredList", lists);
+        RegisterName("Workspaces", workspaces); RegisterName("PreferredList", lists); RegisterName("Connection", connection);
+        RegisterName("SearchNotice", searchNotice);
         RegisterName("ApplyDisplay", applyDisplay); RegisterName("Presentation", presentation); RegisterName("Appearance", appearance);
-        RegisterName("KeyStatus", keyStatus); RegisterName("SaveSettings", save); RegisterName("Connect", connect);
+        RegisterName("SaveSettings", save); RegisterName("Connect", connect);
         var settings = services.Settings;
         mode.SelectedItem = settings.Mode;
         presentation.SelectedItem = TimerStrip.Normalize(settings.Presentation); appearance.SelectedItem = Appearance.Normalize(settings.Appearance); Preview();
@@ -121,164 +102,133 @@ internal sealed class SettingsWindow : Window
         if (settings.Monitor is not null && !monitors.Any(m => m.Id == settings.Monitor)) monitors.Add(new(settings.Monitor, "Saved monitor (disconnected; primary is used)"));
         monitor.ItemsSource = monitors; monitor.SelectedValue = settings.Monitor ?? "";
         startup.IsChecked = settings.LaunchAtSignIn;
+        user = settings.UserId is null ? null : new(settings.UserId, settings.UserName ?? "ClickUp user");
+        updating = true;
         if (settings.WorkspaceId is not null)
         {
-            workspaces.ItemsSource = new[] { new Choice(settings.WorkspaceId!, settings.WorkspaceName ?? settings.WorkspaceId!) }; workspaces.SelectedIndex = 0;
-            if (settings.PreferredListId is not null)
-            {
-                lists.SetChoices([new Choice(settings.PreferredListId!, settings.PreferredListName ?? settings.PreferredListId!)], new(settings.PreferredListId!, settings.PreferredListName ?? settings.PreferredListId!));
-                loadedListScope = settings.UserId + "/" + settings.WorkspaceId;
-                listChoices[loadedListScope] = [new(settings.PreferredListId!, settings.PreferredListName ?? settings.PreferredListId!)];
-            }
-            connection.Text = $"Saved account: {settings.UserName}. Connect to refresh available lists.";
+            workspaces.ItemsSource = new[] { new Choice(settings.WorkspaceId, settings.WorkspaceName ?? settings.WorkspaceId) };
+            workspaces.SelectedIndex = 0;
         }
-        else connection.Text = "Enter your key to choose a workspace and list.";
-        try { hasSavedKey = services.Credentials.Exists(); }
-        catch (Exception ex) { message.Text = SafeMessage(ex); }
-        UpdateKeyStatus();
-        connect.Click += async (_, _) => await Connect();
-        connect.Content = "Refresh connection and lists";
-        workspaces.SelectionChanged += async (_, _) => { if (!updatingWorkspaces && client is not null) await LoadLists(); };
-        keyDelay.Tick += async (_, _) => { keyDelay.Stop(); await Connect(); };
-        key.PasswordChanged += (_, _) =>
+        updating = false;
+        ShowCachedLists();
+        connection.Text = user is null ? "Not connected." : $"{user.Name} · cached lists ready. Connect to authorize search.";
+        try
         {
-            if (closed) return;
-            keyDelay.Stop(); connectVersion++; listVersion++; listRequest?.Cancel(); connectRequest?.Cancel();
-            validatedKey = null; validatedUser = null; client?.Dispose(); client = null;
-            connecting = false; loadingLists = false; connect.IsEnabled = true;
-            message.Text = "";
-            UpdateKeyStatus();
-            connection.Text = "Loading your account after you finish entering the key…";
-            keyDelay.Start();
-        };
+            if (services.OAuth.Read() is { } session)
+            {
+                if (session.User is { } connected && (user is null || user.Id == connected.Id) && session.Workspaces is { Count: > 0 } authorized)
+                {
+                    user = connected; updating = true; workspaces.ItemsSource = authorized;
+                    workspaces.SelectedItem = authorized.FirstOrDefault(w => w.Id == settings.WorkspaceId) ?? authorized[0];
+                    updating = false; ShowCachedLists();
+                }
+                connect.Content = "Reconnect to ClickUp";
+                connection.Text = session.ExpiresAt is { } expiry && expiry <= DateTimeOffset.UtcNow ? "Sign-in expired. Reconnect to search; cached lists are available." : ConnectionText(user?.Name ?? "ClickUp", session.RestCompatible);
+            }
+        }
+        catch (Exception) { connection.Text = "Saved sign-in could not be read. Connect again."; }
         message.Text = services.Store.Warning;
+        connect.Click += async (_, _) => await Connect();
+        workspaces.SelectionChanged += (_, _) => { if (!updating) { interaction.Cancel(); searchNotice.Text = ""; ShowCachedLists(); } };
+        lists.QueryChanged += async () => await SearchLists();
+        account.IsVisibleChanged += (_, _) => { if (account.IsVisible) interaction.Open(); else interaction.Close(); };
         Loaded += async (_, _) =>
         {
-            try { if (hasSavedKey) await Connect(); }
-            catch (Exception ex) { message.Text = SafeMessage(ex); }
-        };
-        Closed += (_, _) => { closed = true; keyDelay.Stop(); lifetime.Cancel(); listRequest?.Cancel(); connectRequest?.Cancel(); client?.Dispose(); key.Clear(); validatedKey = null; };
-    }
-    private static void AddLabel(Panel panel, string text) => panel.Children.Add(new TextBlock { Text = text, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 12, 0, 6) });
-    private async Task Connect()
-    {
-        var version = ++connectVersion;
-        keyDelay.Stop(); connectRequest?.Cancel(); connectRequest?.Dispose(); connectRequest = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
-        var cancellation = connectRequest.Token;
-        connecting = true; connect.IsEnabled = false; message.Text = ""; Appearance.Color(message, TextBlock.ForegroundProperty, "Error");
-        listVersion++; listRequest?.Cancel(); loadingLists = false; client?.Dispose(); client = null; validatedKey = null; validatedUser = null;
-        ClickUpClient? candidate = null;
-        try
-        {
-            var secret = string.IsNullOrWhiteSpace(key.Password) ? services.Credentials.Read() : key.Password.Trim();
-            if (string.IsNullOrWhiteSpace(secret)) throw new ClickUpException("Enter your ClickUp personal API key.");
-            connection.Text = "Connecting to ClickUp…";
-            candidate = createClient(secret);
-            var user = await candidate.Validate(cancellation);
-            var available = await candidate.Workspaces(cancellation);
-            if (version != connectVersion || closed) return;
-            if (available.Count == 0) throw new ClickUpException("This account has no accessible workspaces.");
-            validatedUser = user; validatedKey = secret; client = candidate; candidate = null;
-            connection.Text = $"Connected as {user.Name}. Choose your preferred list.";
-            var preferredWorkspace = (workspaces.SelectedItem as Choice)?.Id ?? services.Settings.WorkspaceId;
-            updatingWorkspaces = true;
+            interaction.Open();
+            // Upgrade sessions saved by the previous build without reopening the browser
+            // or issuing a content search. Valid cached account metadata needs no requests.
+            if (connectAccount is not null) return;
+            var version = connectionVersion;
             try
             {
-                workspaces.ItemsSource = available;
-                workspaces.SelectedItem = available.FirstOrDefault(w => w.Id == preferredWorkspace) ?? available[0];
+                var restored = await services.RestoreConnection(lifetime.Token);
+                if (!closed && version == connectionVersion && restored is not null) ApplyConnection(restored);
             }
-            finally { updatingWorkspaces = false; }
-            connecting = false; connect.IsEnabled = true;
-            await LoadLists();
-        }
-        catch (OperationCanceledException) { }
-        catch (Exception ex) { if (version == connectVersion && !closed) { message.Text = SafeMessage(ex); connection.Text = "Not connected. Your saved settings have not changed."; } }
-        finally { candidate?.Dispose(); if (version == connectVersion && !closed) { connecting = false; connect.IsEnabled = true; } }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { if (!closed && version == connectionVersion) connection.Text = SafeMessage(ex); }
+        };
+        Closed += (_, _) => { closed = true; lifetime.Cancel(); interaction.Close(); statusFilters.Cancel(); };
     }
-    private async Task LoadLists()
+    private static void AddLabel(Panel panel, string text) => panel.Children.Add(new TextBlock { Text = text, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 12, 0, 6) });
+    private void ShowCachedLists()
     {
-        var api = client; if (api is null || workspaces.SelectedItem is not Choice workspace) return;
-        var version = ++listVersion;
-        listRequest?.Cancel(); listRequest?.Dispose(); listRequest = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
-        var cancellation = listRequest.Token;
-        var scope = validatedUser?.Id + "/" + workspace.Id;
-        var preferredList = loadedListScope == scope ? lists.SelectedChoice : null;
-        loadingLists = true;
-        if (loadedListScope != scope)
-        {
-            lists.SetChoices(listChoices.GetValueOrDefault(scope) ?? [], preferredList, resetSearch: true, loading: true);
-            loadedListScope = scope;
-        }
-        connection.Text = "Loading lists…"; message.Text = "";
+        var settings = services.Settings;
+        var workspace = workspaces.SelectedItem as Choice;
+        var choices = user is not null && workspace is not null ? services.SearchCache.Read(user.Id, workspace.Id).Where(i => i.Type == "list").Select(i => i.Choice).ToList() : [];
+        var preferred = user?.Id == settings.UserId && workspace?.Id == settings.WorkspaceId && settings.PreferredListId is not null
+            ? new Choice(settings.PreferredListId, settings.PreferredListName ?? settings.PreferredListId) : null;
+        if (preferred is not null && !choices.Any(c => c.Id == preferred.Id)) choices.Insert(0, preferred);
+        lists.SetChoices(choices, preferred, resetSearch: true);
+    }
+    private async Task Connect()
+    {
+        if (connecting) return;
+        connectionVersion++;
+        interaction.Cancel(); connecting = true; connect.IsEnabled = false; save.IsEnabled = false;
+        connection.Text = "Complete ClickUp sign-in in your browser…"; message.Text = "";
         try
         {
-            void ShowAvailable(List<Choice> available)
-            {
-                if (version != listVersion || closed) return;
-                // Keep the current choice visible until its location has been fetched.
-                // Reading it before replacing ItemsSource also honors changes made while loading.
-                preferredList = lists.SelectedChoice ?? preferredList;
-                var visible = available.ToList();
-                if (preferredList is not null && !visible.Any(l => l.Id == preferredList.Id)) visible.Add(preferredList);
-                listChoices[scope] = visible;
-                lists.SetChoices(visible, preferredList, loading: loadingLists);
-            }
-            var progress = new Progress<List<Choice>>(available =>
-            {
-                if (!loadingLists || version != listVersion || closed) return;
-                ShowAvailable(available);
-                connection.Text = $"{available.Count} lists available — checking remaining locations…";
-            });
-            var available = await api.Lists(workspace.Id, cancellation, progress);
-            if (version != listVersion || closed) return;
-            ShowAvailable(available);
-            connection.Text = available.Count == 0 ? "No accessible active lists in this workspace." : $"Connected as {validatedUser?.Name} · {available.Count} lists available.";
-            if (lists.SelectedChoice is Choice selected && !available.Any(l => l.Id == selected.Id))
-                message.Text = "Your selected list was not returned by ClickUp. It has been kept; refresh to retry or choose another list.";
+            var account = await connectAccount(lifetime.Token);
+            if (closed) return;
+            ApplyConnection(account);
         }
-        catch (OperationCanceledException) { }
-        catch (Exception ex)
+        catch (OperationCanceledException) { if (!closed) connection.Text = "Sign-in was canceled or timed out. Connect to try again."; }
+        catch (Exception ex) { if (!closed) connection.Text = SafeMessage(ex); }
+        finally { connecting = false; if (!closed) { connect.IsEnabled = true; save.IsEnabled = true; } }
+    }
+    private static string ConnectionText(string name, bool restAuthorized) => restAuthorized ? $"Connected as {name}." : $"Search connected as {name}. Timer OAuth authorization is still required.";
+    private void ApplyConnection(ConnectedAccount account)
+    {
+        var previousUser = user?.Id;
+        user = account.User;
+        var previous = (workspaces.SelectedItem as Choice)?.Id ?? services.Settings.WorkspaceId;
+        updating = true; workspaces.ItemsSource = account.Workspaces;
+        workspaces.SelectedItem = account.Workspaces.FirstOrDefault(w => w.Id == previous) ?? account.Workspaces.FirstOrDefault();
+        updating = false;
+        if (previousUser != user.Id || previous != (workspaces.SelectedItem as Choice)?.Id) ShowCachedLists();
+        connection.Text = ConnectionText(user.Name, account.RestAuthorized); connect.Content = "Reconnect to ClickUp";
+    }
+    private async Task SearchLists()
+    {
+        var accountUser = user;
+        var workspace = workspaces.SelectedItem as Choice;
+        if (accountUser is null || workspace is null || connecting) { interaction.Cancel(); return; }
+        var text = lists.SearchBox.Text.Trim();
+        searchNotice.Text = "";
+        var found = new HashSet<string>();
+        await interaction.Run(text, async ct =>
         {
-            if (version == listVersion && !closed)
+            searchNotice.Text = "Finding ClickUp lists…";
+            string? cursor = null;
+            var seen = new HashSet<string>();
+            do
             {
-                message.Text = SafeMessage(ex);
-                connection.Text = lists.AvailableCount > 0 ? "Some locations could not be loaded. Available lists are still searchable." : "Lists could not be loaded. Your key and workspace can still be saved; use Refresh to retry.";
-            }
-        }
-        finally { if (version == listVersion && !closed) loadingLists = false; }
+                var page = await search.Search(workspace.Id, text, "list", null, cursor, ct);
+                ct.ThrowIfCancellationRequested();
+                services.SearchCache.Merge(accountUser.Id, workspace.Id, page.Items);
+                foreach (var item in page.Items.Where(i => i.Type == "list" && (!page.FilterLocally || i.Matches(text)))) found.Add(item.Id);
+                var choices = services.SearchCache.Read(accountUser.Id, workspace.Id).Where(i => i.Type == "list").Select(i => i.Choice);
+                lists.SetChoices(choices, lists.SelectedChoice);
+                lists.SetRemoteMatches(found);
+                cursor = page.Cursor;
+                searchNotice.Text = cursor is null ? $"{found.Count} matching lists found in ClickUp." : $"{found.Count} matching lists · loading more…";
+                if (cursor is not null && !seen.Add(cursor)) throw new ClickUpException("ClickUp repeated a result page. Showing the results received.");
+            } while (cursor is not null);
+        }, ex => searchNotice.Text = SafeMessage(ex));
     }
     private void Save()
     {
-        message.Text = ""; Appearance.Color(message, TextBlock.ForegroundProperty, "Error");
-        if (connecting || keyDelay.IsEnabled) { message.Text = "Your key is still being verified. Please wait a moment, then save."; return; }
-        if (key.Password.Length > 0 && validatedKey != key.Password.Trim()) { message.Text = "Connect to validate the key before saving."; return; }
-        var next = DisplaySettings();
-        if (validatedUser is not null)
-        {
-            if (workspaces.SelectedItem is not Choice workspace) { message.Text = "Select a workspace."; return; }
-            var list = loadedListScope == validatedUser.Id + "/" + workspace.Id ? lists.SelectedChoice : null;
-            next = next with { UserId = validatedUser.Id, UserName = validatedUser.Name, WorkspaceId = workspace.Id, WorkspaceName = workspace.Name, PreferredListId = list?.Id, PreferredListName = list?.Name };
-        }
+        if (connecting) return;
         try
         {
-            services.Save(statusFilters.ApplyTo(next), validatedKey);
-            _ = services.RefreshCache();
-            Close();
+            var next = DisplaySettings();
+            if (user is not null && workspaces.SelectedItem is Choice workspace)
+                next = next with { UserId = user.Id, UserName = user.Name, WorkspaceId = workspace.Id, WorkspaceName = workspace.Name,
+                    PreferredListId = lists.SelectedChoice?.Id, PreferredListName = lists.SelectedChoice?.Name };
+            services.Save(statusFilters.ApplyTo(next)); Close();
         }
         catch (Exception ex) { message.Text = SafeMessage(ex); }
     }
-    private void UpdateKeyStatus()
-    {
-        keyStatus.Text = key.Password.Length > 0 ? "New key entered — not saved yet" : hasSavedKey ? "✓ API key saved on this PC" : "No API key saved yet";
-        Appearance.Color(keyStatus, TextBlock.ForegroundProperty, key.Password.Length == 0 && hasSavedKey ? "Muted" : "Text");
-        key.ToolTip = hasSavedKey ? "A key is saved. Enter a replacement only if you want to change it." : "Enter your personal ClickUp API key.";
-    }
     private AppSettings DisplaySettings() => services.Settings with { Mode = mode.SelectedItem as string ?? "Taskbar", Monitor = string.IsNullOrEmpty(monitor.SelectedValue as string) ? null : monitor.SelectedValue as string, LaunchAtSignIn = startup.IsChecked == true, Presentation = presentation.SelectedItem as string ?? "Compact", Appearance = appearance.SelectedItem as string ?? "System" };
-    private static string SafeMessage(Exception ex) => ex switch
-    {
-        ClickUpException => ex.Message,
-        System.ComponentModel.Win32Exception => "Windows Credential Manager could not complete the request. Your previous setup was retained.",
-        System.IO.IOException or UnauthorizedAccessException => "Settings could not be saved. Check access to your local application-data folder.",
-        _ => "The operation could not be completed. Try again."
-    };
+    private static string SafeMessage(Exception ex) => ex is ClickUpException ? ex.Message : "The operation could not be completed. Cached results and your saved settings are still available.";
 }

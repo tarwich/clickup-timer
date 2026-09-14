@@ -16,6 +16,8 @@ internal sealed class PreferredListPicker : StackPanel
     private readonly ListBox results = new() { DisplayMemberPath = "Name", Height = 120 };
     private List<Choice> choices = [];
     private bool updating;
+    private HashSet<string> remoteMatches = [];
+    internal event Action? QueryChanged;
 
     internal Choice? SelectedChoice { get; private set; }
     internal int AvailableCount => choices.Count;
@@ -24,12 +26,12 @@ internal sealed class PreferredListPicker : StackPanel
 
     internal PreferredListPicker()
     {
-        Children.Add(new TextBlock { Text = "Search by Space, Folder, List name, or list ID", FontSize = 12, Margin = new Thickness(0, 0, 0, 5) });
+        Children.Add(new TextBlock { Text = "Type to search ClickUp lists", FontSize = 12, Margin = new Thickness(0, 0, 0, 5) });
         Children.Add(search); Children.Add(selected); Children.Add(summary); Children.Add(results);
         VirtualizingPanel.SetIsVirtualizing(results, true);
         VirtualizingPanel.SetVirtualizationMode(results, VirtualizationMode.Recycling);
         ScrollViewer.SetCanContentScroll(results, true);
-        search.TextChanged += (_, _) => RefreshResults();
+        search.TextChanged += (_, _) => { remoteMatches.Clear(); RefreshResults(); if (!updating) QueryChanged?.Invoke(); };
         search.KeyDown += (_, e) =>
         {
             if (e.Key == Key.Escape && search.Text.Length > 0)
@@ -58,7 +60,7 @@ internal sealed class PreferredListPicker : StackPanel
 
     internal void SetChoices(IEnumerable<Choice> available, Choice? preferred = null, bool resetSearch = false, bool loading = false)
     {
-        if (resetSearch) { search.Clear(); SelectedChoice = preferred; }
+        if (resetSearch) { updating = true; search.Clear(); updating = false; SelectedChoice = preferred; remoteMatches.Clear(); }
         else SelectedChoice ??= preferred;
         choices = available.GroupBy(c => c.Id).Select(g => g.First()).OrderBy(c => c.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
         SelectedChoice ??= choices.FirstOrDefault();
@@ -77,12 +79,14 @@ internal sealed class PreferredListPicker : StackPanel
         UpdateSelected(); RefreshResults();
     }
 
+    internal void SetRemoteMatches(IEnumerable<string> ids) { remoteMatches = ids.ToHashSet(); RefreshResults(); }
+
     private void UpdateSelected() => selected.Text = SelectedChoice is null ? "Selected: none" : "Selected: " + SelectedChoice.Name;
 
     private void RefreshResults(bool loading = false)
     {
         var terms = search.Text.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var matches = choices.Where(c => terms.All(term => c.Name.Contains(term, StringComparison.OrdinalIgnoreCase)
+        var matches = choices.Where(c => remoteMatches.Contains(c.Id) || terms.All(term => c.Name.Contains(term, StringComparison.OrdinalIgnoreCase)
             || c.Id.Contains(term, StringComparison.OrdinalIgnoreCase))).ToList();
         var limit = terms.Length == 0 ? BrowseLimit : SearchLimit;
         var shown = matches.Take(limit).ToList();

@@ -3,6 +3,64 @@ using System.IO;
 using System.Net.Http;
 using ClickUpTimer;
 
+if (args.Contains("--mcp-verify"))
+{
+    using var services = new AppServices();
+    var account = await services.RestoreConnection(default) ?? throw new Exception("No OAuth session saved");
+    var page = await services.Search.Search(services.Settings.WorkspaceId!, "Proje", "list", null, null, default);
+    services.SearchCache.Merge(account.User.Id, services.Settings.WorkspaceId!, page.Items);
+    var matches = page.Items.Where(i => i.Type == "list" && i.Matches("Proje")).ToList();
+    if (!matches.Any(i => i.Name == "Project 1") || !matches.Any(i => i.Name == "Project 2")) throw new Exception("Expected Project lists absent");
+    var cached = await services.Search.Search(services.Settings.WorkspaceId!, "PHQ", "list", null, null, default);
+    if (!ReferenceEquals(page, cached)) throw new Exception("Typed queries did not reuse the hierarchy response");
+    Console.WriteLine($"Live OAuth search verified: {matches.Count} Project matches; {page.Items.Count(i => i.Type == "list")} lists cached; repeated query reused hierarchy. Account metadata saved: {services.OAuth.Read()?.User is not null}. Timer REST authorized: {account.RestAuthorized}.");
+    return;
+}
+
+if (args.Contains("--mcp-inspect"))
+{
+    using var services = new AppServices();
+    var session = services.OAuth.Read() ?? throw new Exception("No OAuth session saved");
+    Console.WriteLine($"OAuth saved: yes; REST verified: {session.RestCompatible}; cached identity: {session.User is not null}");
+    using var mcp = new ClickUpMcp(session.AccessToken);
+    var tools = await mcp.Tools(default);
+    Directory.CreateDirectory("artifacts/mcp");
+    File.WriteAllText("artifacts/mcp/tools.json", tools.GetRawText());
+    var searchTool = tools.GetProperty("tools").EnumerateArray().Single(t => t.GetProperty("name").GetString() == "clickup_search");
+    var arguments = McpSearchService.Arguments(searchTool.GetProperty("inputSchema"), services.Settings.WorkspaceId!, "Proje", "list", null, null);
+    Console.WriteLine("Search arguments: " + System.Text.Json.JsonSerializer.Serialize(arguments));
+    var result = await mcp.Call("clickup_search", arguments, default);
+    File.WriteAllText("artifacts/mcp/search-response.json", result.GetRawText());
+    var hierarchy = await mcp.Call("clickup_get_workspace_hierarchy", new { workspace_id = services.Settings.WorkspaceId, max_depth = "2", limit = 50 }, default);
+    File.WriteAllText("artifacts/mcp/hierarchy-response.json", hierarchy.GetRawText());
+    var identity = McpSearchService.Content(await mcp.Call("clickup_resolve_assignees", new { workspace_id = services.Settings.WorkspaceId, assignees = new[] { "me" } }, default));
+    Console.WriteLine("MCP identity matches saved user: " + (identity.GetProperty("userIds")[0].GetString() == services.Settings.UserId));
+    Console.WriteLine("Live search response saved.");
+    return;
+}
+
+if (args.Contains("--mcp-connect"))
+{
+    Console.WriteLine("Opening ClickUp sign-in. Waiting up to 15 minutes for authorization.");
+    var session = await ClickUpOAuth.Connect(default);
+    new OAuthStore().Write(session);
+    Console.WriteLine("OAuth connected and securely saved.");
+    using var mcp = new ClickUpMcp(session.AccessToken);
+    var tools = await mcp.Tools(default);
+    Directory.CreateDirectory("artifacts/mcp");
+    File.WriteAllText("artifacts/mcp/tools.json", tools.GetRawText());
+    Console.WriteLine("MCP tool schemas saved (no credentials).");
+    try
+    {
+        using var api = new ClickUpClient("Bearer " + session.AccessToken);
+        var user = await api.Validate(default);
+        new OAuthStore().Write(session with { RestCompatible = true });
+        Console.WriteLine("MCP OAuth token accepted by REST: " + (user.Id == new SettingsStore().Load().UserId ? "matches saved user" : "different user"));
+    }
+    catch (ClickUpException) { Console.WriteLine("MCP OAuth token not accepted by public REST."); }
+    return;
+}
+
 if (args.Contains("--visual-live")) { AppearanceChecks.ShowFixture(); return; }
 if (args.Contains("--timer-live")) { AppearanceChecks.ShowFixture(true); return; }
 
@@ -15,7 +73,7 @@ if (args.Length == 2 && args[0] == "--visual-check")
 if (args.Contains("--live-read"))
 {
     using var services = new AppServices();
-    using var api = new ClickUpClient(services.Credentials.Read() ?? throw new Exception("No saved key"));
+    using var api = services.CreateClient();
     if (await api.User() != services.Settings.UserId) throw new Exception("Saved account identity differs");
     var current = await api.Current(services.Settings.WorkspaceId!);
     var history = await api.Entries(services.Settings.WorkspaceId!, 0, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
@@ -98,6 +156,7 @@ try
 finally { vault.Delete(); }
 Check(vault.Read() is null, "Only the isolated test credential is removed");
 await SettingsFlowChecks.Run(Check);
+await SearchChecks.Run(Check);
 await TimingChecks.Run(Check);
 await Phase4Checks.Run(Check);
 AppearanceChecks.Run(Check);

@@ -6,8 +6,11 @@ namespace ClickUpTimer;
 
 internal sealed record Choice(string Id, string Name) { public override string ToString() => Name; }
 internal sealed record ClickUpUser(string Id, string Name);
-internal sealed class ClickUpException(string message, bool rateLimited = false) : Exception(message)
-{ internal bool RateLimited { get; } = rateLimited; }
+internal sealed class ClickUpException(string message, bool rateLimited = false, bool authenticationRejected = false) : Exception(message)
+{
+    internal bool RateLimited { get; } = rateLimited;
+    internal bool AuthenticationRejected { get; } = authenticationRejected;
+}
 
 internal sealed class ClickUpClient : IDisposable, ITimingApi
 {
@@ -37,7 +40,7 @@ internal sealed class ClickUpClient : IDisposable, ITimingApi
                     HttpStatusCode.NotFound => "This ClickUp location is no longer available. Select another list.",
                     HttpStatusCode.TooManyRequests => "ClickUp's request limit was reached. Wait a minute, then try again.",
                     _ => "ClickUp could not complete the request. Try again shortly."
-                }, response.StatusCode == HttpStatusCode.TooManyRequests);
+                }, response.StatusCode == HttpStatusCode.TooManyRequests, response.StatusCode == HttpStatusCode.Unauthorized);
             return JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellation));
         }
         catch (HttpRequestException) { throw new ClickUpException("Cannot reach ClickUp. Check your internet connection and try again."); }
@@ -142,6 +145,11 @@ internal sealed class ClickUpClient : IDisposable, ITimingApi
         return new(Id(item), Name(item), status.GetProperty("status").GetString() ?? "",
             item.TryGetProperty("list", out var location) ? Id(location) : list,
             status.TryGetProperty("type", out var type) ? type.GetString() : null);
+    }
+    internal async Task<TaskSummary> TaskById(string id, CancellationToken cancellation)
+    {
+        using var json = await Get($"task/{Segment(id)}", cancellation);
+        return ParseTask(json.RootElement);
     }
     internal async Task<List<TaskSummary>> WorkspacePage(string workspace, int page, CancellationToken cancellation)
     {

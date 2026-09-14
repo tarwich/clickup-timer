@@ -4,13 +4,80 @@ internal sealed class AppServices : IDisposable
 {
     internal SettingsStore Store { get; }
     internal CredentialStore Credentials { get; }
+    internal OAuthStore OAuth { get; }
+    internal SearchCache SearchCache { get; }
+    internal IClickUpSearch Search { get; }
+    internal ClickUpClient CreateClient() => new(RestAuthorization());
+    internal string RestAuthorization()
+    {
+        var oauth = OAuth.Read();
+        if (oauth?.RestCompatible == true) return "Bearer " + oauth.AccessToken;
+        throw new ClickUpException("Connect to ClickUp in Settings. Timer operations require OAuth authorization.");
+    }
     internal AppSettings Settings { get; private set; }
     internal event Action? Changed;
     internal Func<string?>? ValidateAccountChange { get; set; }
+    internal async Task<ConnectedAccount> ConnectAccount(CancellationToken cancellation)
+    {
+        void CheckTimer()
+        {
+            var problem = ValidateAccountChange?.Invoke();
+            if (problem is not null) throw new ClickUpException(problem);
+        }
+        CheckTimer();
+        var session = await ClickUpOAuth.Connect(cancellation);
+        return await CompleteConnection(session, cancellation, CheckTimer);
+    }
+    internal async Task<ConnectedAccount?> RestoreConnection(CancellationToken cancellation)
+    {
+        var session = OAuth.Read();
+        if (session is null) return null;
+        if (session.User is not null && session.Workspaces is { Count: > 0 }) return new(session.User, session.Workspaces, session.RestCompatible);
+        return await CompleteConnection(session, cancellation, () => { });
+    }
+    private async Task<ConnectedAccount> CompleteConnection(OAuthSession session, CancellationToken cancellation, Action checkTimer)
+    {
+        using var mcp = new ClickUpMcp(session.AccessToken);
+        await mcp.Tools(cancellation);
+        ClickUpUser user;
+        List<Choice> workspaces;
+        try
+        {
+            using var oauthApi = new ClickUpClient("Bearer " + session.AccessToken);
+            user = await oauthApi.Validate(cancellation);
+            workspaces = await oauthApi.Workspaces(cancellation);
+            session = session with { RestCompatible = true };
+        }
+        catch (ClickUpException ex) when (ex.AuthenticationRejected)
+        {
+            // A successful MCP sign-in is a connected search session even when
+            // the independently scoped REST API requires another OAuth grant.
+            var args = new Dictionary<string, object?> { ["max_depth"] = "0", ["limit"] = 1 };
+            if (Settings.WorkspaceId is not null) args["workspace_id"] = Settings.WorkspaceId;
+            var hierarchy = McpSearchService.Content(await mcp.Call("clickup_get_workspace_hierarchy", args, cancellation));
+            var root = hierarchy.GetProperty("hierarchy").GetProperty("root");
+            var workspaceId = root.GetProperty("id").ToString();
+            var me = McpSearchService.Content(await mcp.Call("clickup_resolve_assignees", new { workspace_id = workspaceId, assignees = new[] { "me" } }, cancellation));
+            var userId = me.GetProperty("userIds")[0].GetString() ?? throw new ClickUpException("ClickUp could not identify the connected user.");
+            user = new(userId, userId == Settings.UserId ? Settings.UserName ?? "ClickUp user" : "ClickUp user");
+            workspaces = [new(workspaceId, workspaceId == Settings.WorkspaceId ? Settings.WorkspaceName ?? "Workspace" : root.GetProperty("name").GetString() ?? "Workspace")];
+        }
+        cancellation.ThrowIfCancellationRequested(); checkTimer();
+        if (workspaces.Count == 0) throw new ClickUpException("Authorize at least one ClickUp workspace.");
+        // Do not silently replace the timer account while its settings are still a draft.
+        if (Settings.UserId is not null && user.Id != Settings.UserId)
+            throw new ClickUpException("Sign in with the account already used by this timer.");
+        OAuth.Write(session with { User = user, Workspaces = workspaces });
+        if (session.RestCompatible) Credentials.Delete();
+        return new(user, workspaces, session.RestCompatible);
+    }
     private CancellationTokenSource? refresh;
     internal string? CacheNotice { get; private set; }
     internal AppServices(SettingsStore? store = null, CredentialStore? credentials = null)
-    { Store = store ?? new(); Credentials = credentials ?? new(); Settings = Store.Load(); }
+    {
+        Store = store ?? new(); Credentials = credentials ?? new(); Settings = Store.Load();
+        OAuth = new(Store.DirectoryPath); SearchCache = new(Store.DirectoryPath); Search = new McpSearchService(OAuth);
+    }
 
     internal void Save(AppSettings next, string? replacementKey = null)
     {
@@ -49,9 +116,7 @@ internal sealed class AppServices : IDisposable
         if (!config.IsConfigured) return;
         try
         {
-            var key = Credentials.Read();
-            if (key is null) return;
-            using var client = new ClickUpClient(key);
+            using var client = CreateClient();
             var tasks = await client.Tasks(config.PreferredListId!, cancellation);
             cancellation.ThrowIfCancellationRequested();
             if (Settings.UserId != config.UserId || Settings.WorkspaceId != config.WorkspaceId || Settings.PreferredListId != config.PreferredListId) return;
@@ -62,5 +127,5 @@ internal sealed class AppServices : IDisposable
         catch (Exception) { CacheNotice = "Settings saved. Task cache could not refresh; it can be retried from Settings."; }
         Changed?.Invoke();
     }
-    public void Dispose() { refresh?.Cancel(); refresh?.Dispose(); }
+    public void Dispose() { refresh?.Cancel(); refresh?.Dispose(); (Search as IDisposable)?.Dispose(); }
 }

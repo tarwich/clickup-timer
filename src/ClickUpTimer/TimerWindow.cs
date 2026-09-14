@@ -92,7 +92,7 @@ internal sealed class TimerWindow : Window
         SystemEvents.SessionSwitch += SessionSwitch;
         SystemEvents.PowerModeChanged += PowerChanged;
         services.Changed += UpdateSummary; UpdateSummary();
-        Loaded += async (_, _) => { if (openSettings || !services.Settings.IsConfigured) _ = Dispatcher.BeginInvoke(OpenSettings); if (services.Settings.IsConfigured) _ = services.RefreshCache(); await timer.Refresh(); };
+        Loaded += async (_, _) => { if (openSettings || !services.Settings.IsConfigured) _ = Dispatcher.BeginInvoke(OpenSettings); await timer.Refresh(); };
         Closing += async (_, e) =>
         {
             if (mayClose) return;
@@ -164,6 +164,7 @@ internal sealed class TimerWindow : Window
     internal void RequestShutdownStop() { timer.RequestPause(); _ = timer.Stop(); }
     internal void OpenSettings()
     {
+        picker.IsOpen = false;
         if (settingsWindow is not null) { settingsWindow.Activate(); return; }
         settingsWindow = new(services); settingsWindow.Closed += (_, _) => settingsWindow = null;
         settingsWindow.Show(); settingsWindow.Activate();

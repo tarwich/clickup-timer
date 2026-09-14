@@ -124,6 +124,21 @@ Phase 5 implementation: server-backed entries, durable start/stop intent, entry-
 
 See [BEAUTIFICATION_PLAN.md](BEAUTIFICATION_PLAN.md) for the design and detailed verification record.
 
+## Search integration requirements — 2026-09-14
+
+- [x] Implement MCP transport and cached, debounced list/task search; replace hierarchy discovery in Settings and the explicit workspace-search button in the task picker.
+- [x] Persist a Current list / Entire workspace toggle and retain local matches while remote results arrive.
+- [x] Add browser OAuth with dynamic client registration, PKCE, state validation, and Windows-user-bound encrypted storage; remove API-key entry from Settings.
+- [x] Complete live MCP OAuth and inspect actual schemas. MCP search excludes Lists; list discovery uses batched MCP hierarchy pages with local filtering and a ten-minute page cache. Live `Proje` returns both Project lists and caches all three lists. Task list filters use `subcategories`, and results locate lists under `hierarchy.subcategory`.
+- [x] Update connection status immediately after MCP-only sign-in, restore existing partial sessions, and keep search counts separate from connection status. 172 application checks pass.
+- [ ] Implement separate REST OAuth authorization: the live MCP token is rejected by REST. No API-key fallback exists. Timer operations, task hydration/creation, and status loading remain unavailable until this is complete.
+- [ ] Verify live task search and multi-page hierarchy behavior.
+- Remote search must originate from a user searching in the list or task picker with a nonempty query. Opening a picker or restoring saved text must not trigger remote search. Any debounce or result pagination must remain attached to that active user search and cancel when the picker closes or its query/account/workspace changes.
+- Never call MCP search from startup, timer reconciliation, scheduled/background work, cache refresh, status discovery, account validation, or automatic retries. Fetch known objects and timing data through their REST endpoints; do not use search to resolve known IDs or populate caches in the background.
+- Apply item-type and status filters to returned results locally as needed; reuse cached results without additional search calls. Do not silently fall back to a full workspace crawl on a search failure or quota limit.
+- [x] Fixture checks verify that opening/closing pickers, restoring settings, blank queries, and connection loading make zero remote search calls. Search is isolated from timing, cache refresh, and status discovery. Debouncing, late-response cancellation, cache isolation, scope persistence, and MCP streamed-response handling are covered.
+- API review: the published v2 specification (83 paths) and v3 specification (23 paths) expose no general text-search endpoint. The v3 Search for Docs endpoint has metadata filters but no text query. Saved Views support task text filtering; this does not provide cross-type workspace search.
+
 ## References
 
 - [Windows topmost window positioning](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowpos)

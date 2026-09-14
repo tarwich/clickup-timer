@@ -1,7 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
-using System.Windows.Media;
 
 namespace ClickUpTimer;
 
@@ -11,131 +11,152 @@ internal sealed class TaskPickerPanel : StackPanel
     private readonly Func<TaskSummary?> active;
     private readonly Func<TaskSummary, Task> select;
     private readonly Func<ClickUpClient> createClient;
+    private readonly IClickUpSearch search;
+    private readonly InteractiveSearch interaction = new();
     private readonly TextBox query = new() { Height = 28, Padding = new Thickness(6, 3, 6, 3), MaxLength = 500 };
-    private readonly ListBox results = new() { DisplayMemberPath = "Label", MaxHeight = 250, MinHeight = 65 };
+    private readonly ListBox results = new() { MaxHeight = 250, MinHeight = 65 };
     private readonly TextBlock notice = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 6) };
-    private readonly Button search = new() { Content = "Search workspace", Height = 28 };
+    private readonly ToggleButton currentList = new() { Height = 28, Margin = new Thickness(0, 6, 0, 2), HorizontalAlignment = HorizontalAlignment.Left, Padding = new Thickness(8, 3, 8, 3) };
     private readonly Button create = new() { Height = 28 };
-    private readonly List<TaskSummary> workspace = [];
-    private CancellationTokenSource? request;
+    private readonly HashSet<string> remoteMatches = [];
     private string? scope;
     private string searchStatus = "";
-    private bool creating;
-    internal TaskPickerPanel(AppServices services, Func<TaskSummary?> active, Func<TaskSummary, Task> select, Action openTask, Func<ClickUpClient>? createClient = null)
+    private bool creating, updating;
+    internal TaskPickerPanel(AppServices services, Func<TaskSummary?> active, Func<TaskSummary, Task> select, Action openTask,
+        Func<ClickUpClient>? createClient = null, IClickUpSearch? search = null)
     {
         this.services = services; this.active = active; this.select = select;
-        this.createClient = createClient ?? (() => new(services.Credentials.Read() ?? throw new ClickUpException("Connect an API key in Settings first.")));
+        this.createClient = createClient ?? services.CreateClient;
+        this.search = search ?? services.Search;
         NameScope.SetNameScope(this, new NameScope());
         RegisterName("SearchText", query); RegisterName("CreateTask", create); RegisterName("Notice", notice);
+        RegisterName("CurrentList", currentList); RegisterName("Results", results);
         Margin = new Thickness(12);
-        Children.Add(new TextBlock { Text = "Tasks", FontSize = 14, FontWeight = FontWeights.SemiBold });
-        Children.Add(new TextBlock { Text = "Search task names or IDs", Margin = new Thickness(0, 6, 0, 4), TextWrapping = TextWrapping.Wrap });
-        Children.Add(query); Children.Add(notice); Children.Add(results);
-        query.KeyDown += (_, e) => { if (e.Key == Key.Down && results.Items.Count > 0) { results.SelectedIndex = Math.Max(0, results.SelectedIndex); results.Focus(); e.Handled = true; } else if (e.Key == Key.Enter) { if (results.SelectedIndex < 0 && results.Items.Count > 0) results.SelectedIndex = 0; Choose(); e.Handled = true; } };
-        // Ellipsize long names instead of allowing the list to force a wider popup.
-        results.DisplayMemberPath = "";
+        Children.Add(new TextBlock { Text = "Choose a task", FontSize = 14, FontWeight = FontWeights.SemiBold });
+        Children.Add(currentList); Children.Add(query); Children.Add(notice); Children.Add(results);
+        currentList.SetResourceReference(StyleProperty, "SearchScopeToggle");
+        currentList.ToolTip = "Switch between your current list and the entire workspace. This choice is saved.";
+        currentList.IsChecked = services.Settings.SearchCurrentList;
+        currentList.Click += async (_, _) =>
+        {
+            try { services.Save(services.Settings with { SearchCurrentList = currentList.IsChecked == true }); }
+            catch (Exception) { currentList.IsChecked = services.Settings.SearchCurrentList; notice.Text = "Search scope could not be saved."; return; }
+            await SearchChanged();
+        };
+        query.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Down && results.Items.Count > 0) { results.SelectedIndex = Math.Max(0, results.SelectedIndex); results.Focus(); e.Handled = true; }
+            else if (e.Key == Key.Enter) { if (results.SelectedIndex < 0 && results.Items.Count > 0) results.SelectedIndex = 0; Choose(); e.Handled = true; }
+        };
         var row = new FrameworkElementFactory(typeof(TextBlock));
         row.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding("Label"));
         row.SetBinding(TextBlock.ToolTipProperty, new System.Windows.Data.Binding("Label"));
         row.SetValue(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis);
         results.ItemTemplate = new DataTemplate { VisualTree = row };
-        results.Loaded += (_, _) =>
-        {
-            var itemStyle = new Style(typeof(ListBoxItem), results.TryFindResource(typeof(ListBoxItem)) as Style);
-            itemStyle.Setters.Add(new Setter(System.Windows.Automation.AutomationProperties.NameProperty, new System.Windows.Data.Binding("Label")));
-            results.ItemContainerStyle = itemStyle;
-        };
-        query.TextChanged += (_, _) => Refresh();
+        VirtualizingPanel.SetIsVirtualizing(results, true);
+        query.TextChanged += async (_, _) => { if (!updating) await SearchChanged(); };
         results.MouseDoubleClick += (_, _) => Choose();
         results.KeyDown += (_, e) => { if (e.Key == Key.Enter) { Choose(); e.Handled = true; } };
         var use = new Button { Content = "Use selected task", Height = 28, Margin = new Thickness(0, 6, 0, 6) };
-        var actions = new Grid { Margin = new Thickness(0, 6, 0, 0) };
-        actions.ColumnDefinitions.Add(new ColumnDefinition()); actions.ColumnDefinitions.Add(new ColumnDefinition());
-        use.Margin = new Thickness(0, 0, 4, 0); actions.Children.Add(use);
-        use.Click += (_, _) => Choose(); Children.Add(actions);
-        search.Click += async (_, _) => await SearchWorkspace(); Grid.SetColumn(search, 1); actions.Children.Add(search);
+        use.Click += (_, _) => Choose(); Children.Add(use);
         create.Margin = new Thickness(0, 6, 0, 6);
         create.Click += async (_, _) => await Create(); Children.Add(create);
-        var more = new Button { Content = "More actions", HorizontalAlignment = HorizontalAlignment.Left, BorderThickness = new Thickness(0) };
-        var menu = new ContextMenu();
-        var open = new MenuItem { Header = "Open current task in ClickUp" }; open.Click += (_, _) => openTask(); menu.Items.Add(open);
-        var refresh = new MenuItem { Header = "Refresh preferred list" };
-        refresh.Click += async (_, _) => { refresh.IsEnabled = false; await services.RefreshCache(); refresh.IsEnabled = true; Refresh(); }; menu.Items.Add(refresh);
-        more.ContextMenu = menu; more.Click += (_, _) => { menu.PlacementTarget = more; menu.IsOpen = true; }; Children.Add(more);
+        var open = new Button { Content = "Open current task in ClickUp", HorizontalAlignment = HorizontalAlignment.Left, BorderThickness = new Thickness(0) };
+        open.Click += (_, _) => openTask(); Children.Add(open);
+        Refresh();
     }
     private async void Choose()
     {
         if (creating || results.SelectedItem is not TaskRow row) return;
-        try { services.Save(services.Settings with { RecentTasks = TaskCatalog.Remember(services.Settings, row.Task) }); await select(row.Task); }
-        catch (Exception) { notice.Text = "Could not save recent tasks. Try again."; }
+        interaction.Cancel();
+        var settings = services.Settings;
+        try
+        {
+            using var client = createClient();
+            var task = await client.TaskById(row.Task.Id, default);
+            if (settings.UserId != services.Settings.UserId || settings.WorkspaceId != services.Settings.WorkspaceId) return;
+            services.SearchCache.Merge(settings.UserId!, settings.WorkspaceId!, [new(task.Id, task.Name, "task", task.ListId, task.Status, task.StatusType)]);
+            services.Save(services.Settings with { RecentTasks = TaskCatalog.Remember(services.Settings, task) }); await select(task);
+        }
+        catch (Exception ex) { notice.Text = Error(ex); }
     }
     internal void Open()
     {
-        Cancel(); workspace.Clear(); searchStatus = ""; Refresh();
-        Dispatcher.BeginInvoke(() => query.Focus());
+        interaction.Open(); remoteMatches.Clear(); searchStatus = "";
+        updating = true; query.Clear(); updating = false;
+        Refresh(); Dispatcher.BeginInvoke(() => query.Focus());
     }
     internal void Refresh()
     {
         var settings = services.Settings;
         var nextScope = $"{settings.UserId}/{settings.WorkspaceId}/{settings.PreferredListId}";
-        if (scope != nextScope) { Cancel(); workspace.Clear(); scope = nextScope; searchStatus = ""; }
-        var cache = settings.IsConfigured ? services.Store.LoadCache(settings.UserId!, settings.WorkspaceId!, settings.PreferredListId!) : null;
+        if (scope != nextScope) { interaction.Cancel(); remoteMatches.Clear(); scope = nextScope; searchStatus = ""; }
+        currentList.IsChecked = settings.SearchCurrentList;
+        currentList.Content = settings.SearchCurrentList ? "Current list" : "Entire workspace";
+        var items = settings.IsConfigured ? services.SearchCache.Read(settings.UserId!, settings.WorkspaceId!).Where(i => i.Type == "task").Select(i => i.Task).ToList() : [];
+        var legacy = settings.IsConfigured ? services.Store.LoadCache(settings.UserId!, settings.WorkspaceId!, settings.PreferredListId!)?.Tasks ?? [] : [];
+        var all = items.Concat(legacy).DistinctBy(t => t.Id).ToList();
+        var preferred = all.Where(t => t.ListId == settings.PreferredListId).ToList();
+        var filteredSettings = settings.SearchCurrentList ? settings with { RecentTasks = settings.RecentTasks.Where(t => t.Task.ListId == settings.PreferredListId).ToList() } : settings;
         var selected = (results.SelectedItem as TaskRow)?.Task.Id;
-        var rows = TaskCatalog.Filter(settings, cache?.Tasks ?? [], workspace, query.Text, active());
-        results.ItemsSource = rows;
+        var rows = TaskCatalog.Filter(filteredSettings, preferred, settings.SearchCurrentList ? [] : all, query.Text, active(), remoteMatches);
+        results.ItemsSource = rows.Take(200).ToList();
         results.SelectedItem = rows.FirstOrDefault(r => r.Task.Id == selected);
-        notice.Text = !settings.IsConfigured ? "Choose a preferred list in Settings first."
-            : $"{rows.Count} shown · {settings.PreferredListName}\n" + (searchStatus.Length > 0 ? searchStatus : cache is null ? "Preferred list not loaded yet. Refresh to load it." : "");
-        if (services.CacheNotice?.Contains("could not") == true) notice.Text += "\nConnection failed; cached results may be out of date.";
+        notice.Text = !settings.IsConfigured ? "Connect and choose a list in Settings first."
+            : (searchStatus.Length > 0 ? searchStatus : "Cached tasks · type to search ClickUp") + $"\n{Math.Min(rows.Count, 200)} shown" + (rows.Count > 200 ? " · narrow your search to see more" : "");
         create.Visibility = string.IsNullOrWhiteSpace(query.Text) ? Visibility.Collapsed : Visibility.Visible;
-        create.Content = "Create task in " + (settings.PreferredListName ?? "preferred list");
+        create.Content = "Create task in " + (settings.PreferredListName ?? "current list");
         create.IsEnabled = settings.IsConfigured && !creating && !string.IsNullOrWhiteSpace(query.Text);
-        search.IsEnabled = settings.IsConfigured && request is null && !creating;
+        currentList.IsEnabled = !creating;
     }
-    private ClickUpClient Client() => createClient();
-    private async Task SearchWorkspace()
+    private async Task SearchChanged()
     {
-        Cancel(); var pending = new CancellationTokenSource(); request = pending;
-        var settings = services.Settings; workspace.Clear(); searchStatus = "Searching workspace — results are incomplete…"; Refresh();
-        try
+        remoteMatches.Clear(); searchStatus = ""; Refresh();
+        var settings = services.Settings;
+        var text = query.Text.Trim();
+        if (!settings.IsConfigured || creating) { interaction.Cancel(); return; }
+        await interaction.Run(text, async ct =>
         {
-            using var client = Client();
-            for (var page = 0; ; page++)
+            searchStatus = "Searching ClickUp…"; Refresh();
+            string? cursor = null;
+            var seen = new HashSet<string>();
+            do
             {
-                var tasks = await client.WorkspacePage(settings.WorkspaceId!, page, pending.Token);
-                if (request != pending) return;
-                workspace.AddRange(tasks);
-                searchStatus = $"Searching workspace — {workspace.Count} tasks checked; results are incomplete…"; Refresh();
-                if (tasks.Count == 0) break;
-            }
-            searchStatus = "Workspace search complete.";
-        }
-        catch (OperationCanceledException) { return; }
-        catch (Exception ex) { searchStatus = "Workspace search incomplete. " + Error(ex); }
-        finally { if (request == pending) { request = null; pending.Dispose(); Refresh(); } }
+                var page = await search.Search(settings.WorkspaceId!, text, "task", settings.SearchCurrentList ? settings.PreferredListId : null, cursor, ct);
+                ct.ThrowIfCancellationRequested();
+                services.SearchCache.Merge(settings.UserId!, settings.WorkspaceId!, page.Items);
+                foreach (var item in page.Items.Where(i => i.Type == "task" && (!settings.SearchCurrentList || i.ListId == settings.PreferredListId))) remoteMatches.Add(item.Id);
+                cursor = page.Cursor;
+                searchStatus = cursor is null ? "Search complete" : "Searching ClickUp · more results loading…";
+                Refresh();
+                if (cursor is not null && !seen.Add(cursor)) throw new ClickUpException("ClickUp repeated a result page. Showing the results received.");
+            } while (cursor is not null);
+        }, ex => { searchStatus = Error(ex); Refresh(); });
     }
     private async Task Create()
     {
         if (creating || string.IsNullOrWhiteSpace(query.Text)) return;
+        interaction.Cancel();
         var settings = services.Settings; var title = query.Text.Trim();
         creating = true; query.IsEnabled = false; Refresh(); notice.Text = "Creating task…";
         TaskSummary? created = null;
         try
         {
-            using var client = Client();
+            using var client = createClient();
             created = await client.CreateTask(settings.PreferredListId!, title, CancellationToken.None);
             if (services.Settings.UserId != settings.UserId || services.Settings.WorkspaceId != settings.WorkspaceId || services.Settings.PreferredListId != settings.PreferredListId)
-            { notice.Text = "Task created in the original preferred list. Your setup changed; select it from that list."; return; }
+            { notice.Text = "Task created in the original list. Your setup changed; select it from that list."; return; }
+            services.SearchCache.Merge(settings.UserId!, settings.WorkspaceId!, [new(created.Id, created.Name, "task", created.ListId, created.Status, created.StatusType)]);
             services.Save(services.Settings with { RecentTasks = TaskCatalog.Remember(services.Settings, created) });
-            await select(created); query.Clear(); _ = services.RefreshCache();
+            await select(created); updating = true; query.Clear(); updating = false;
         }
         catch (Exception ex)
         {
-            notice.Text = created is not null ? "Task was created, but recent tasks could not be saved. Refresh before creating another."
-                : Error(ex) + " Your title is retained. If the connection was lost, refresh and check for the task before retrying.";
+            notice.Text = created is not null ? "Task was created, but recent tasks could not be saved. Search before creating another."
+                : Error(ex) + " Your title is retained. If the connection was lost, check for the task before retrying.";
         }
-        finally { creating = false; query.IsEnabled = true; create.IsEnabled = !string.IsNullOrWhiteSpace(query.Text); search.IsEnabled = request is null; }
+        finally { creating = false; query.IsEnabled = true; create.IsEnabled = !string.IsNullOrWhiteSpace(query.Text); currentList.IsEnabled = true; }
     }
-    private static string Error(Exception ex) => ex is ClickUpException ? ex.Message : "The operation could not be completed. Try again.";
-    internal void Cancel() { request?.Cancel(); request?.Dispose(); request = null; }
+    private static string Error(Exception ex) => ex is ClickUpException ? ex.Message : "Could not complete the request. Cached results are still available.";
+    internal void Cancel() => interaction.Close();
 }
