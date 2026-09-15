@@ -28,7 +28,7 @@ internal static class SearchChecks
                 try { services.RestAuthorization(); check(false, "Unverified OAuth must not fall back to a legacy key"); }
                 catch (ClickUpException) { check(true, "OAuth-only runtime rejects legacy-key fallback even when a key is saved"); }
                 oauth.Write(new("verified-fixture-token", "test-client", RestCompatible: true));
-                check(services.RestAuthorization() == "Bearer verified-fixture-token", "Timer authorization uses only a verified OAuth token");
+                check(services.RestAuthorization() == "Bearer verified-fixture-token", "Legacy REST features use only a REST-verified OAuth token");
             }
             finally { legacy.Delete(); }
         }

@@ -8,11 +8,33 @@ internal sealed class AppServices : IDisposable
     internal SearchCache SearchCache { get; }
     internal IClickUpSearch Search { get; }
     internal ClickUpClient CreateClient() => new(RestAuthorization());
+    internal ITimingApi CreateTimingApi(TimingState? timing = null)
+    {
+        var session = OAuth.Read() ?? throw new ClickUpException("Open Settings and reconnect to ClickUp to recover your timer.");
+        return new McpTimingApi(session.AccessToken, Settings.WorkspaceId!,
+            new[] { timing?.Entry, timing?.Stopping?.Entry }.OfType<TimeEntry>());
+    }
+    internal async Task<TaskSummary> GetTask(string id)
+    {
+        var session = OAuth.Read() ?? throw new ClickUpException("Reconnect to ClickUp in Settings.");
+        using var client = new ClickUpMcp(session.AccessToken);
+        var task = McpSearchService.Content(await client.Call("clickup_get_task", new { workspace_id = Settings.WorkspaceId, task_id = id }, default));
+        return ReadMcpTask(task);
+    }
+    internal static TaskSummary ReadMcpTask(System.Text.Json.JsonElement task)
+    {
+        if (task.TryGetProperty("task", out var wrapped)) task = wrapped;
+        var status = task.GetProperty("status");
+        return new(task.GetProperty("id").ToString(), task.GetProperty("name").GetString()!,
+            status.ValueKind == System.Text.Json.JsonValueKind.Object ? status.GetProperty("status").ToString() : status.ToString(),
+            task.TryGetProperty("list", out var list) && list.TryGetProperty("id", out var listId) ? listId.ToString() : null,
+            status.ValueKind == System.Text.Json.JsonValueKind.Object && status.TryGetProperty("type", out var type) ? type.ToString() : null);
+    }
     internal string RestAuthorization()
     {
         var oauth = OAuth.Read();
         if (oauth?.RestCompatible == true) return "Bearer " + oauth.AccessToken;
-        throw new ClickUpException("Connect to ClickUp in Settings. Timer operations require OAuth authorization.");
+        throw new ClickUpException("This feature is not yet available with your browser sign-in. Search, task selection, and timers use your existing connection.");
     }
     internal AppSettings Settings { get; private set; }
     internal event Action? Changed;

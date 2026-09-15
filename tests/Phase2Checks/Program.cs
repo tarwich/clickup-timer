@@ -3,6 +3,43 @@ using System.IO;
 using System.Net.Http;
 using ClickUpTimer;
 
+if (args.Contains("--mcp-timer-inspect"))
+{
+    using var services = new AppServices();
+    var session = services.OAuth.Read() ?? throw new Exception("No OAuth session saved");
+    using var mcp = new ClickUpMcp(session.AccessToken);
+    var tools = await mcp.Tools(default);
+    Directory.CreateDirectory("artifacts/mcp");
+    File.WriteAllText("artifacts/mcp/tools.json", tools.GetRawText());
+    var current = McpSearchService.Content(await mcp.Call("clickup_get_current_time_entry", new { workspace_id = services.Settings.WorkspaceId }, default));
+    File.WriteAllText("artifacts/mcp/current-timer.json", current.GetRawText());
+    Console.WriteLine("Current timer response fields: " + string.Join(", ", current.EnumerateObject().Select(p => p.Name)));
+    if (current.TryGetProperty("currentEntry", out var entry) && entry.ValueKind == System.Text.Json.JsonValueKind.Object)
+        Console.WriteLine("Entry field types: " + string.Join(", ", entry.EnumerateObject().Select(p => p.Name + ":" + p.Value.ValueKind)));
+    var history = McpSearchService.Content(await mcp.Call("clickup_get_time_entries", new { workspace_id = services.Settings.WorkspaceId, start_date = DateTime.Today.AddDays(-7).ToString("yyyy-MM-dd"), end_date = DateTime.Today.AddDays(1).ToString("yyyy-MM-dd") }, default));
+    File.WriteAllText("artifacts/mcp/timer-history.json", history.GetRawText());
+    var sample = history.GetProperty("entries").EnumerateArray().FirstOrDefault();
+    if (sample.ValueKind == System.Text.Json.JsonValueKind.Object)
+        foreach (var name in new[] { "start", "end", "duration_ms" }) Console.WriteLine(name + ": " + sample.GetProperty(name));
+    foreach (var item in history.GetProperty("entries").EnumerateArray()) McpTimingApi.Parse(item);
+    using var timerApi = services.CreateTimingApi();
+    Console.WriteLine("MCP timer identity matches saved user: " + (await timerApi.User() == services.Settings.UserId));
+    Console.WriteLine("Current timer running: " + ((await timerApi.Current(services.Settings.WorkspaceId!))?.Running == true));
+    Console.WriteLine("Recent timer history parsed successfully.");
+    if (sample.ValueKind == System.Text.Json.JsonValueKind.Object)
+    {
+        var expected = McpTimingApi.Parse(sample);
+        var recovered = await timerApi.Entry(services.Settings.WorkspaceId!, expected.Id);
+        Console.WriteLine("MCP recovery reads the original entry from history: " + (recovered.Id == expected.Id && recovered.Start == expected.Start));
+    }
+    if (sample.ValueKind == System.Text.Json.JsonValueKind.Object && sample.GetProperty("task").ValueKind == System.Text.Json.JsonValueKind.Object)
+    {
+        var taskId = sample.GetProperty("task").GetProperty("id").ToString();
+        Console.WriteLine("MCP task selection hydration verified: " + ((await services.GetTask(taskId)).Id == taskId));
+    }
+    return;
+}
+
 if (args.Contains("--mcp-verify"))
 {
     using var services = new AppServices();
@@ -158,6 +195,7 @@ Check(vault.Read() is null, "Only the isolated test credential is removed");
 await SettingsFlowChecks.Run(Check);
 await SearchChecks.Run(Check);
 await TimingChecks.Run(Check);
+await McpTimingChecks.Run(Check);
 await Phase4Checks.Run(Check);
 AppearanceChecks.Run(Check);
 Console.WriteLine($"{checks} application checks passed.");

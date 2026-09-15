@@ -11,6 +11,7 @@ internal sealed class TaskPickerPanel : StackPanel
     private readonly Func<TaskSummary?> active;
     private readonly Func<TaskSummary, Task> select;
     private readonly Func<ClickUpClient> createClient;
+    private readonly Func<string, Task<TaskSummary>> getTask;
     private readonly IClickUpSearch search;
     private readonly InteractiveSearch interaction = new();
     private readonly TextBox query = new() { Height = 28, Padding = new Thickness(6, 3, 6, 3), MaxLength = 500 };
@@ -23,10 +24,11 @@ internal sealed class TaskPickerPanel : StackPanel
     private string searchStatus = "";
     private bool creating, updating;
     internal TaskPickerPanel(AppServices services, Func<TaskSummary?> active, Func<TaskSummary, Task> select, Action openTask,
-        Func<ClickUpClient>? createClient = null, IClickUpSearch? search = null)
+        Func<ClickUpClient>? createClient = null, IClickUpSearch? search = null, Func<string, Task<TaskSummary>>? getTask = null)
     {
         this.services = services; this.active = active; this.select = select;
         this.createClient = createClient ?? services.CreateClient;
+        this.getTask = getTask ?? (createClient is null ? services.GetTask : async id => { using var client = createClient(); return await client.TaskById(id, default); });
         this.search = search ?? services.Search;
         NameScope.SetNameScope(this, new NameScope());
         RegisterName("SearchText", query); RegisterName("CreateTask", create); RegisterName("Notice", notice);
@@ -58,6 +60,7 @@ internal sealed class TaskPickerPanel : StackPanel
         results.MouseDoubleClick += (_, _) => Choose();
         results.KeyDown += (_, e) => { if (e.Key == Key.Enter) { Choose(); e.Handled = true; } };
         var use = new Button { Content = "Use selected task", Height = 28, Margin = new Thickness(0, 6, 0, 6) };
+        RegisterName("UseSelectedTask", use);
         use.Click += (_, _) => Choose(); Children.Add(use);
         create.Margin = new Thickness(0, 6, 0, 6);
         create.Click += async (_, _) => await Create(); Children.Add(create);
@@ -72,8 +75,7 @@ internal sealed class TaskPickerPanel : StackPanel
         var settings = services.Settings;
         try
         {
-            using var client = createClient();
-            var task = await client.TaskById(row.Task.Id, default);
+            var task = await getTask(row.Task.Id);
             if (settings.UserId != services.Settings.UserId || settings.WorkspaceId != services.Settings.WorkspaceId) return;
             services.SearchCache.Merge(settings.UserId!, settings.WorkspaceId!, [new(task.Id, task.Name, "task", task.ListId, task.Status, task.StatusType)]);
             services.Save(services.Settings with { RecentTasks = TaskCatalog.Remember(services.Settings, task) }); await select(task);

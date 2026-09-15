@@ -123,7 +123,7 @@ internal sealed class SettingsWindow : Window
                     updating = false; ShowCachedLists();
                 }
                 connect.Content = "Reconnect to ClickUp";
-                connection.Text = session.ExpiresAt is { } expiry && expiry <= DateTimeOffset.UtcNow ? "Sign-in expired. Reconnect to search; cached lists are available." : ConnectionText(user?.Name ?? "ClickUp", session.RestCompatible);
+                connection.Text = session.ExpiresAt is { } expiry && expiry <= DateTimeOffset.UtcNow ? "Sign-in expired. Reconnect to resume search and timers; saved timer requests are retained." : ConnectionText(user?.Name ?? "ClickUp");
             }
         }
         catch (Exception) { connection.Text = "Saved sign-in could not be read. Connect again."; }
@@ -176,7 +176,7 @@ internal sealed class SettingsWindow : Window
         catch (Exception ex) { if (!closed) connection.Text = SafeMessage(ex); }
         finally { connecting = false; if (!closed) { connect.IsEnabled = true; save.IsEnabled = true; } }
     }
-    private static string ConnectionText(string name, bool restAuthorized) => restAuthorized ? $"Connected as {name}." : $"Search connected as {name}. Timer OAuth authorization is still required.";
+    private static string ConnectionText(string name) => $"Connected as {name}. Search and timers use this sign-in.";
     private void ApplyConnection(ConnectedAccount account)
     {
         var previousUser = user?.Id;
@@ -186,7 +186,7 @@ internal sealed class SettingsWindow : Window
         workspaces.SelectedItem = account.Workspaces.FirstOrDefault(w => w.Id == previous) ?? account.Workspaces.FirstOrDefault();
         updating = false;
         if (previousUser != user.Id || previous != (workspaces.SelectedItem as Choice)?.Id) ShowCachedLists();
-        connection.Text = ConnectionText(user.Name, account.RestAuthorized); connect.Content = "Reconnect to ClickUp";
+        connection.Text = ConnectionText(user.Name); connect.Content = "Reconnect to ClickUp";
     }
     private async Task SearchLists()
     {

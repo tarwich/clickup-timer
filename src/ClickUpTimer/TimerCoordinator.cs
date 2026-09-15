@@ -36,7 +36,7 @@ internal sealed class TimerCoordinator
     internal TimerCoordinator(AppServices services, Func<ITimingApi>? createApi = null, TimeProvider? clock = null)
     {
         this.services = services; this.clock = clock ?? TimeProvider.System;
-        this.createApi = createApi ?? services.CreateClient;
+        this.createApi = createApi ?? (() => services.CreateTimingApi(state));
         try { state = services.Store.LoadTiming(); }
         catch (Exception) { state = new(); corrupt = true; Message = "Saved timer recovery data could not be read. Review ClickUp, then use Accept ClickUp state."; }
         services.ValidateAccountChange = () => CanChangeAccount ? null : "Stop and confirm the current timer before changing account, workspace, or API key.";
@@ -157,19 +157,35 @@ internal sealed class TimerCoordinator
         }
         else
         {
+            // Record the attempted write before sending it, including a lost Stop response.
+            if (!api.CanEditStopTime && !stop.Sent)
+            {
+                stop = stop with { Sent = true };
+                Save(state with { Stopping = stop });
+            }
             if (!await api.StopCurrent(state.WorkspaceId!, remote.Id))
                 throw new ClickUpException("The running timer changed. Refreshing the original entry before retrying.");
             remote = await ReadTarget();
             if (remote.Running) throw new ClickUpException("ClickUp has not confirmed Stop yet.");
             if (remote.Start != stop.Entry.Start || remote.Task?.Id != stop.Entry.Task?.Id || remote.Description != stop.Entry.Description)
                 throw new ClickUpException("The entry changed while stopping. Refresh to reconcile it.");
-            await api.Finish(state.WorkspaceId!, remote, end);
-            remote = await ReadTarget();
-            if (remote.Running || Math.Abs((remote.End > 0 ? remote.End : remote.Start + remote.Duration) - end) > 1000)
-                throw new ClickUpException("Stop has not been confirmed by ClickUp yet.");
+            if (api.CanEditStopTime)
+            {
+                await api.Finish(state.WorkspaceId!, remote, end);
+                remote = await ReadTarget();
+                if (remote.Running || Math.Abs((remote.End > 0 ? remote.End : remote.Start + remote.Duration) - end) > 1000)
+                    throw new ClickUpException("Stop has not been confirmed by ClickUp yet.");
+            }
         }
         var current = await api.Current(state.WorkspaceId!);
         if (current?.Id == remote.Id && current.Running) throw new ClickUpException("ClickUp still reports this timer running. Stop remains unconfirmed.");
+        if (!api.CanEditStopTime && stop.Sent && Math.Abs((remote.End > 0 ? remote.End : remote.Start + remote.Duration) - end) > 5000)
+        {
+            Save(state with { Entry = remote, CompletedMilliseconds = Math.Max(0, remote.Duration) });
+            Conflict = true;
+            Message = $"Timer stopped in ClickUp. Its recorded stop differs from your requested stop at {DateTimeOffset.FromUnixTimeMilliseconds(end).ToLocalTime():g}. This connection cannot adjust recorded time. Correct the entry in ClickUp, then Refresh, or use Accept ClickUp state to keep its recorded duration. Your requested stop remains saved.";
+            return;
+        }
         Save(state with { Entry = remote, Stopping = null, PauseAt = null, CompletedMilliseconds = Math.Max(0, remote.Duration) });
     }
     private async Task Totals(ITimingApi api)

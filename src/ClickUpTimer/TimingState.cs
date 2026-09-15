@@ -6,6 +6,7 @@ internal sealed record TimeEntry(string Id, string UserId, TaskSummary? Task, lo
 }
 internal interface ITimingApi : IDisposable
 {
+    bool CanEditStopTime => true;
     Task<string> User();
     Task<TimeEntry?> Current(string workspace);
     Task<TimeEntry> Entry(string workspace, string id);
@@ -15,7 +16,7 @@ internal interface ITimingApi : IDisposable
     Task<List<TimeEntry>> Entries(string workspace, long start, long end);
 }
 internal sealed record StartRequest(string Marker, TaskSummary Task, long RequestedAt);
-internal sealed record StopRequest(TimeEntry Entry, long RequestedAt);
+internal sealed record StopRequest(TimeEntry Entry, long RequestedAt, bool Sent = false);
 internal sealed record TimingState
 {
     public string? UserId { get; init; }

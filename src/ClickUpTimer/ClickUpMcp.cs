@@ -32,9 +32,9 @@ internal sealed class ClickUpMcp : IDisposable
         if (sessionId is not null) request.Headers.Add("Mcp-Session-Id", sessionId);
         if (initialized) request.Headers.Add("MCP-Protocol-Version", protocol);
         using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-        if (response.StatusCode == HttpStatusCode.Unauthorized) throw new ClickUpException("ClickUp sign-in expired. Reconnect in Settings.");
-        if (response.StatusCode == HttpStatusCode.TooManyRequests) throw new ClickUpException("ClickUp's search limit was reached. Cached results are still available; try later.", true);
-        if (!response.IsSuccessStatusCode) throw new ClickUpException("ClickUp search could not connect. Cached results are still available.");
+        if (response.StatusCode == HttpStatusCode.Unauthorized) throw new ClickUpException("ClickUp sign-in expired. Reconnect in Settings. Saved timer requests are retained.", authenticationRejected: true);
+        if (response.StatusCode == HttpStatusCode.TooManyRequests) throw new ClickUpException("ClickUp's request limit was reached. Cached results and timer recovery requests are retained; try later.", true);
+        if (!response.IsSuccessStatusCode) throw new ClickUpException("ClickUp could not connect. Cached results and timer recovery requests are retained.");
         if (response.Headers.TryGetValues("Mcp-Session-Id", out var sessions)) sessionId = sessions.First();
         if (notification) return default;
         JsonElement envelope;
@@ -95,7 +95,7 @@ internal sealed class ClickUpMcp : IDisposable
         await Initialize(ct);
         var result = await Send("tools/call", new { name, arguments }, ct);
         if (result.TryGetProperty("isError", out var error) && error.ValueKind == JsonValueKind.True)
-            throw new ClickUpException("ClickUp could not complete the search. Check your connection and workspace access.");
+            throw new ClickUpException("ClickUp could not complete the operation. Check your connection and workspace access. Saved timer requests are retained.");
         return result;
     }
     public void Dispose() => http.Dispose();

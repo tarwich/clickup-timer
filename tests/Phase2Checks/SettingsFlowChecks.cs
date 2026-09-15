@@ -40,7 +40,7 @@ internal static class SettingsFlowChecks
                     await Task.Delay(30);
                     check(connections == 1 && search.Calls.Count == 0, "Connect loads account choices without searching lists");
                     var connectionText = ((TextBlock)window.FindName("Connection")).Text;
-                    check(connectionText.Contains("Search connected as Fixture") && ((Button)window.FindName("Connect")).Content.ToString() == "Reconnect to ClickUp", "MCP-only OAuth updates connection immediately without reopening Settings");
+                    check(connectionText.Contains("Connected as Fixture. Search and timers use this sign-in.") && ((Button)window.FindName("Connect")).Content.ToString() == "Reconnect to ClickUp", "MCP-only OAuth connects search and timers without requesting a second authorization");
                     lists.SearchBox.Text = "p"; lists.SearchBox.Text = "pay"; lists.SearchBox.Text = "payroll";
                     await Task.Delay(800);
                     check(search.Calls.Count == 1 && search.Calls[0] is ("w", "payroll", "list", null), "List typing debounces to one scoped MCP search");
@@ -68,11 +68,17 @@ internal static class SettingsFlowChecks
                     large.SearchBox.Text = "list";
                     check(large.DisplayedCount == 200, "Broad cached list matches are capped for responsiveness");
                     var taskSearch = new FakeSearch();
-                    var picker = new TaskPickerPanel(services, () => null, _ => Task.CompletedTask, () => { }, search: taskSearch);
+                    TaskSummary? selected = null;
+                    var hydrated = 0;
+                    var picker = new TaskPickerPanel(services, () => null, task => { selected = task; return Task.CompletedTask; }, () => { }, search: taskSearch,
+                        getTask: id => { hydrated++; return Task.FromResult(new TaskSummary(id, "Hydrated task", "open", "l")); });
                     var draft = (TextBox)picker.FindName("SearchText");
                     var toggle = (ToggleButton)picker.FindName("CurrentList");
                     picker.Open(); await Task.Delay(750);
                     check(taskSearch.Calls.Count == 0 && ((ListBox)picker.FindName("Results")).Items.Count == 1, "Opening task picker shows cached tasks and makes no search call");
+                    ((ListBox)picker.FindName("Results")).SelectedIndex = 0;
+                    ((Button)picker.FindName("UseSelectedTask")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    check(hydrated == 1 && selected?.Id == "t1", "Task selection uses the OAuth task reader without requiring a REST client");
                     draft.Text = "needle"; await Task.Delay(800);
                     check(taskSearch.Calls.Single() is ("w", "needle", "task", "l"), "Task search defaults to current list");
                     check(((ListBox)picker.FindName("Results")).Items.Count == 1, "Server content matches survive local name filtering");
