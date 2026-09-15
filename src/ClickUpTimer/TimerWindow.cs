@@ -69,6 +69,8 @@ internal sealed class TimerWindow : Window
         var retry = new Button { Content = "Retry connection", Margin = new Thickness(0, 0, 4, 0) }; retry.Click += async (_, _) => await timer.Refresh();
         var review = new Button { Content = "Accept ClickUp state…" }; review.Click += (_, _) => Review();
         recovery.Children.Add(retry); recovery.Children.Add(review); current.Children.Add(recovery);
+        var reconnect = new Button { Content = "Reconnect to ClickUp", Margin = new Thickness(4, 0, 0, 0) };
+        reconnect.Click += (_, _) => OpenSettings(); recovery.Children.Add(reconnect);
         var pickerContent = new StackPanel(); pickerContent.Children.Add(current); pickerContent.Children.Add(pickerPanel);
         var frame = new Border { Width = 390, BorderThickness = new Thickness(1), Child = new ScrollViewer { Content = pickerContent, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MaxHeight = 600 } };
         // Popup content has its own visual root. Share the live resource dictionary explicitly.
@@ -88,6 +90,8 @@ internal sealed class TimerWindow : Window
         tray.ContextMenuStrip = trayMenu; tray.DoubleClick += (_, _) => Dispatcher.Invoke(OpenSettings);
         pulse.Tick += (_, _) => UpdateTimer(); pulse.Start();
         timer.Changed += UpdateTimer;
+        services.Reconnected += Reconnected;
+        Closed += (_, _) => services.Reconnected -= Reconnected;
         reconcile.Tick += async (_, _) => await timer.Refresh(); reconcile.Start();
         SystemEvents.SessionSwitch += SessionSwitch;
         SystemEvents.PowerModeChanged += PowerChanged;
@@ -110,6 +114,7 @@ internal sealed class TimerWindow : Window
         if (MessageBox.Show(timer.ReviewText, "Review timer recovery", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes)
             await timer.AcceptRemote();
     }
+    private async void Reconnected() => await timer.RefreshAfterReconnect();
     private void UpdateTimer()
     {
         if (displayedTask != timer.SelectedTask?.Id && !timer.IsRunning) strip.ResetDurationWidth();

@@ -55,12 +55,13 @@ internal sealed class TimerCoordinator
         if (HasPending || state.Entry?.Running == true) throw new ClickUpException("Restore the original account and workspace to recover its timer.");
         Save(new() { UserId = settings.UserId, WorkspaceId = settings.WorkspaceId }); entries.Clear();
     }
-    private async Task Run(Func<ITimingApi, Task> action, bool wait = false, bool allowReview = false)
+    private async Task Run(Func<ITimingApi, Task> action, bool wait = false, bool allowReview = false, bool reconnected = false)
     {
         if (wait) await gate.WaitAsync(); else if (!await gate.WaitAsync(0)) return;
         Busy = true; Changed?.Invoke();
         try
         {
+            if (reconnected) retryAfter = default;
             if (corrupt && !allowReview) return;
             if (unsavedPauseAt is not null) throw new ClickUpException("Stop could not be saved locally. Keep the app open and retry Stop, or stop it in ClickUp.");
             if (clock.GetUtcNow() < retryAfter) { Message = "Waiting before retrying ClickUp. Your request remains saved."; return; }
@@ -80,6 +81,7 @@ internal sealed class TimerCoordinator
         finally { Busy = false; gate.Release(); Changed?.Invoke(); }
     }
     internal Task Refresh() => Run(async api => { await Reconcile(api); await Totals(api); });
+    internal Task RefreshAfterReconnect() => Run(async api => { await Reconcile(api); await Totals(api); }, wait: true, reconnected: true);
     private bool Own(TimeEntry e) => e.UserId == state.UserId;
     private async Task Reconcile(ITimingApi api)
     {

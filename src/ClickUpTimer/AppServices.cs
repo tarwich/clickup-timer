@@ -16,26 +16,21 @@ internal sealed class AppServices : IDisposable
     }
     internal AppSettings Settings { get; private set; }
     internal event Action? Changed;
+    internal event Action? Reconnected;
     internal Func<string?>? ValidateAccountChange { get; set; }
     internal async Task<ConnectedAccount> ConnectAccount(CancellationToken cancellation)
     {
-        void CheckTimer()
-        {
-            var problem = ValidateAccountChange?.Invoke();
-            if (problem is not null) throw new ClickUpException(problem);
-        }
-        CheckTimer();
         var session = await ClickUpOAuth.Connect(cancellation);
-        return await CompleteConnection(session, cancellation, CheckTimer);
+        return await CompleteConnection(session, cancellation);
     }
     internal async Task<ConnectedAccount?> RestoreConnection(CancellationToken cancellation)
     {
         var session = OAuth.Read();
         if (session is null) return null;
         if (session.User is not null && session.Workspaces is { Count: > 0 }) return new(session.User, session.Workspaces, session.RestCompatible);
-        return await CompleteConnection(session, cancellation, () => { });
+        return await CompleteConnection(session, cancellation);
     }
-    private async Task<ConnectedAccount> CompleteConnection(OAuthSession session, CancellationToken cancellation, Action checkTimer)
+    private async Task<ConnectedAccount> CompleteConnection(OAuthSession session, CancellationToken cancellation)
     {
         using var mcp = new ClickUpMcp(session.AccessToken);
         await mcp.Tools(cancellation);
@@ -62,13 +57,21 @@ internal sealed class AppServices : IDisposable
             user = new(userId, userId == Settings.UserId ? Settings.UserName ?? "ClickUp user" : "ClickUp user");
             workspaces = [new(workspaceId, workspaceId == Settings.WorkspaceId ? Settings.WorkspaceName ?? "Workspace" : root.GetProperty("name").GetString() ?? "Workspace")];
         }
-        cancellation.ThrowIfCancellationRequested(); checkTimer();
+        cancellation.ThrowIfCancellationRequested();
+        return StoreConnection(session, user, workspaces);
+    }
+    internal ConnectedAccount StoreConnection(OAuthSession session, ClickUpUser user, List<Choice> workspaces)
+    {
         if (workspaces.Count == 0) throw new ClickUpException("Authorize at least one ClickUp workspace.");
         // Do not silently replace the timer account while its settings are still a draft.
         if (Settings.UserId is not null && user.Id != Settings.UserId)
             throw new ClickUpException("Sign in with the account already used by this timer.");
+        if (Settings.WorkspaceId is { } workspace && !workspaces.Any(w => w.Id == workspace)
+            && ValidateAccountChange?.Invoke() is not null)
+            throw new ClickUpException("Authorize the workspace already used by this timer so its saved timer can recover.");
         OAuth.Write(session with { User = user, Workspaces = workspaces });
         if (session.RestCompatible) Credentials.Delete();
+        Reconnected?.Invoke();
         return new(user, workspaces, session.RestCompatible);
     }
     private CancellationTokenSource? refresh;

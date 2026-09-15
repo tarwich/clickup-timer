@@ -22,6 +22,10 @@ internal static class TimingChecks
             await timer.Select(one); await timer.Start();
             check(timer.IsRunning && api.Starts == 1, "Start reconciles the server entry before showing running");
             var runningEntry = api.CurrentEntry;
+            var runningState = store.LoadTiming();
+            services.StoreConnection(new("fixture-token", "fixture-client"), new("u", "Fixture"), [new("w", "Workspace")]);
+            check(timer.IsRunning && store.LoadTiming() == runningState,
+                "Same-account OAuth reconnect is allowed while running without changing timer state");
             services.Save(services.Settings with { Presentation = "Minimal", Appearance = "Dark" });
             check(timer.IsRunning && api.CurrentEntry == runningEntry && api.Starts == 1 && api.Finishes == 0, "Changing appearance and presentation leaves the running entry untouched");
             var accountBlocked = false;
@@ -38,6 +42,23 @@ internal static class TimingChecks
             var saved = store.LoadTiming();
             check(saved.Stopping is not null && timer.HasPending && !timer.Online, "Offline Stop persists exact cutoff and remains visibly unconfirmed");
             var cutoff = saved.Stopping!.RequestedAt;
+            var reconnectSession = new OAuthSession("fixture-token", "fixture-client");
+            services.StoreConnection(reconnectSession, new("u", "Fixture"), [new("w", "Workspace")]);
+            check(store.LoadTiming() == saved && services.OAuth.Read()?.AccessToken == "fixture-token",
+                "Reconnect during pending Stop preserves the durable cutoff and installs same-account authorization");
+            foreach (var wrongScope in new[] { new ConnectedAccount(new("other", "Other"), [new("w", "Workspace")]),
+                new ConnectedAccount(new("u", "Fixture"), [new("other", "Other workspace")]) })
+            {
+                var rejected = false;
+                try { services.StoreConnection(reconnectSession with { AccessToken = "wrong-token" }, wrongScope.User, wrongScope.Workspaces); }
+                catch (ClickUpException) { rejected = true; }
+                check(rejected && services.OAuth.Read()?.AccessToken == "fixture-token" && store.LoadTiming() == saved,
+                    "Reconnect rejects a different user or missing timer workspace without replacing credentials or recovery");
+            }
+            api.Offline = false;
+            await timer.RefreshAfterReconnect();
+            check(!timer.HasPending && api.All[saved.Stopping.Entry.Id].End == cutoff,
+                "Reconnect immediately recovers pending Stop despite the previous connection backoff");
             api.Offline = false; time.Advance(60); timer = NewTimer(); await timer.Refresh();
             check(!timer.HasPending && timer.Elapsed == "00m 07s" && api.All[saved.Stopping.Entry.Id].End == cutoff, "Restart recovery corrects the original entry to saved stop timestamp");
             await timer.Select(one); api.LoseStartResponse = true; await timer.Start();

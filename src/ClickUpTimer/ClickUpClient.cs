@@ -35,7 +35,7 @@ internal sealed class ClickUpClient : IDisposable, ITimingApi
             if (!response.IsSuccessStatusCode)
                 throw new ClickUpException(response.StatusCode switch
                 {
-                    HttpStatusCode.Unauthorized => "ClickUp rejected the API key. Check it and try again.",
+                    HttpStatusCode.Unauthorized => "ClickUp authorization expired or was rejected. Open Settings and reconnect with the same account and workspace. Your timer recovery request is retained.",
                     HttpStatusCode.Forbidden => "Your ClickUp account does not have access to this location.",
                     HttpStatusCode.NotFound => "This ClickUp location is no longer available. Select another list.",
                     HttpStatusCode.TooManyRequests => "ClickUp's request limit was reached. Wait a minute, then try again.",
