@@ -221,6 +221,7 @@ await SettingsFlowChecks.Run(Check);
 await SearchChecks.Run(Check);
 await TimingChecks.Run(Check);
 await McpTimingChecks.Run(Check);
+await LocalTimerChecks.Run(Check);
 await Phase4Checks.Run(Check);
 AppearanceChecks.Run(Check);
 Console.WriteLine($"{checks} application checks passed.");

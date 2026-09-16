@@ -39,6 +39,7 @@ internal sealed class AppServices : IDisposable
     internal AppSettings Settings { get; private set; }
     internal event Action? Changed;
     internal event Action? Reconnected;
+    internal bool LocalTimerMode { get; set; }
     internal Func<string?>? ValidateAccountChange { get; set; }
     internal async Task<ConnectedAccount> ConnectAccount(CancellationToken cancellation)
     {

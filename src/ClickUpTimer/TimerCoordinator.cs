@@ -16,19 +16,20 @@ internal sealed class TimerCoordinator
     internal event Action? Changed;
     internal bool Busy { get; private set; }
     internal bool Online { get; private set; }
+    internal bool LocalOnly => state.LocalOnly;
     internal bool Conflict { get; private set; }
     internal string? Message { get; private set; }
     internal bool HasPending => state.Starting is not null || state.Stopping is not null || state.PauseAt is not null;
     internal bool CanRequestStop => (state.Entry?.Running == true || state.Starting is not null) && state.Stopping is null && state.PauseAt is null;
-    internal bool IsRunning => state.Entry?.Running == true && state.Stopping is null;
+    internal bool IsRunning => LocalOnly ? state.LocalStartedAt is not null : state.Entry?.Running == true && state.Stopping is null;
     internal TaskSummary? SelectedTask => state.Selected;
-    internal bool CanChangeAccount => !Busy && !HasPending && state.Entry?.Running != true && !corrupt;
+    internal bool CanChangeAccount => LocalOnly || (!Busy && !HasPending && state.Entry?.Running != true && !corrupt);
     internal bool NeedsReview => Conflict || corrupt || state.Starting is not null;
-    internal string StatusText => corrupt || Conflict ? "⚠ Review needed" : state.Stopping is not null ? "! Stop pending"
+    internal string StatusText => LocalOnly ? IsRunning ? "▶ Local timer" : "■ Local timer" : corrupt || Conflict ? "⚠ Review needed" : state.Stopping is not null ? "! Stop pending"
         : state.Starting is not null ? "! Start pending" : !Online ? Busy ? "… Connecting" : "⚠ Offline" : IsRunning ? "▶ Running" : "■ Stopped";
     internal string ReviewText => $"{Message}\n\nTask: {state.Selected?.Name ?? "None"}\nEntry: {state.Stopping?.Entry.Id ?? state.Entry?.Id ?? "Unconfirmed start"}\nRequested stop: {(state.Stopping is { } s ? DateTimeOffset.FromUnixTimeMilliseconds(s.RequestedAt).ToLocalTime().ToString() : "None")}\n\nAccepting ClickUp state abandons the saved request and keeps ClickUp's current record. Review the task in ClickUp first. Continue?";
     private long Now => clock.GetUtcNow().ToUnixTimeMilliseconds();
-    internal string Elapsed => TimingMath.Format(state.Stopping is { } stop ? Math.Max(0, stop.RequestedAt - stop.Entry.Start)
+    internal string Elapsed => TimingMath.Format(LocalOnly ? state.LocalStartedAt is long localStart ? Now - localStart : state.CompletedMilliseconds : state.Stopping is { } stop ? Math.Max(0, stop.RequestedAt - stop.Entry.Start)
         : state.Entry?.Running == true ? Now - state.Entry.Start : state.CompletedMilliseconds);
     internal string Today => !Online || SelectedTask is null || totalsDay != TimingMath.DayStart(clock.GetUtcNow(), TimeZoneInfo.Local) ? "—"
         : TimingMath.Format(TimingMath.Total(entries, state.Entry?.Running == true ? state.Entry : null, state.UserId!, SelectedTask.Id, totalsDay, Now));
@@ -39,13 +40,50 @@ internal sealed class TimerCoordinator
         this.createApi = createApi ?? (() => services.CreateTimingApi(state));
         try { state = services.Store.LoadTiming(); }
         catch (Exception) { state = new(); corrupt = true; Message = "Saved timer recovery data could not be read. Review ClickUp, then use Accept ClickUp state."; }
+        services.LocalTimerMode = LocalOnly;
+        if (LocalOnly) Message = LocalNotice;
         services.ValidateAccountChange = () => CanChangeAccount ? null : "Stop and confirm the current timer before changing account, workspace, or API key.";
     }
     private void Save(TimingState next)
     {
         // Persist intent before changing memory or issuing any server write.
         if (next == state) return;
-        services.Store.SaveTiming(next); state = next;
+        services.Store.SaveTiming(next); state = next; services.LocalTimerMode = LocalOnly;
+    }
+    private const string LocalNotice = "Local timer — record time in ClickUp manually. Old recovery requests were discarded; any timer still running in ClickUp must be stopped there. Use Enable ClickUp logging to reconnect this timer.";
+    // Local mode deliberately has no dependency on OAuth, remote history, or recovery.
+    internal async Task UseLocalTimer()
+    {
+        inhibitStart = true;
+        await gate.WaitAsync();
+        try
+        {
+            var next = new TimingState { LocalOnly = true, UserId = services.Settings.UserId,
+                WorkspaceId = services.Settings.WorkspaceId, Selected = state.Selected };
+            services.Store.SaveTiming(next); state = next; services.LocalTimerMode = true;
+            corrupt = false; Conflict = false; unsavedPauseAt = null; retryAfter = default;
+            Online = false; Message = LocalNotice;
+        }
+        catch (Exception) { Message = "Could not reset the local timer file. Check that the app can write its data folder."; }
+        finally { gate.Release(); Changed?.Invoke(); }
+    }
+    internal async Task EnableClickUpLogging()
+    {
+        await gate.WaitAsync();
+        try
+        {
+            if (!LocalOnly) return;
+            Save(new() { UserId = services.Settings.UserId, WorkspaceId = services.Settings.WorkspaceId, Selected = state.Selected });
+            retryAfter = default; Message = "ClickUp logging enabled. Reconnect in Settings if sign-in has expired.";
+        }
+        catch (Exception) { Message = "Could not save the timer mode."; }
+        finally { gate.Release(); Changed?.Invoke(); }
+    }
+    private Task LocalChange(Func<TimingState, TimingState> change)
+    {
+        try { Save(change(state)); Message = LocalNotice; }
+        catch (Exception) { Message = "Could not save the local timer. Check that the app can write its data folder."; }
+        Changed?.Invoke(); return Task.CompletedTask;
     }
     private void Scope()
     {
@@ -62,6 +100,7 @@ internal sealed class TimerCoordinator
         try
         {
             if (reconnected) retryAfter = default;
+            if (LocalOnly) return;
             if (corrupt && !allowReview) return;
             if (unsavedPauseAt is not null) throw new ClickUpException("Stop could not be saved locally. Keep the app open and retry Stop, or stop it in ClickUp.");
             if (clock.GetUtcNow() < retryAfter) { Message = "Waiting before retrying ClickUp. Your request remains saved."; return; }
@@ -145,7 +184,7 @@ internal sealed class TimerCoordinator
             return entry;
         }
         var remote = await ReadTarget();
-        if (!Own(remote) || remote.Start != stop.Entry.Start || remote.Task?.Id != stop.Entry.Task?.Id || remote.Description != stop.Entry.Description)
+        if (!Own(remote) || (remote.Running && (remote.Start != stop.Entry.Start || remote.Task?.Id != stop.Entry.Task?.Id || remote.Description != stop.Entry.Description)))
         { if (!remote.Running) Save(state with { Entry = remote, CompletedMilliseconds = Math.Max(0, remote.Duration) }); Conflict = true; Message = "The time entry was edited elsewhere. Review it in ClickUp, then Accept ClickUp state."; return; }
         var end = Math.Max(remote.Start, stop.RequestedAt);
         Conflict = false;
@@ -179,13 +218,7 @@ internal sealed class TimerCoordinator
         }
         var current = await api.Current(state.WorkspaceId!);
         if (current?.Id == remote.Id && current.Running) throw new ClickUpException("ClickUp still reports this timer running. Stop remains unconfirmed.");
-        if (!api.CanEditStopTime && stop.Sent && Math.Abs((remote.End > 0 ? remote.End : remote.Start + remote.Duration) - end) > 5000)
-        {
-            Save(state with { Entry = remote, CompletedMilliseconds = Math.Max(0, remote.Duration) });
-            Conflict = true;
-            Message = $"Timer stopped in ClickUp. Its recorded stop differs from your requested stop at {DateTimeOffset.FromUnixTimeMilliseconds(end).ToLocalTime():g}. This connection cannot adjust recorded time. Correct the entry in ClickUp, then Refresh, or use Accept ClickUp state to keep its recorded duration. Your requested stop remains saved.";
-            return;
-        }
+        // The confirmed server duration wins. A different cutoff must never lock the app.
         Save(state with { Entry = remote, Stopping = null, PauseAt = null, CompletedMilliseconds = Math.Max(0, remote.Duration) });
     }
     private async Task Totals(ITimingApi api)
@@ -195,7 +228,7 @@ internal sealed class TimerCoordinator
         entries = await api.Entries(state.WorkspaceId!, 0, Now + 1);
         totalsDay = day;
     }
-    internal Task Start() => Run(async api =>
+    internal Task Start() => LocalOnly ? LocalChange(s => s.LocalStartedAt is not null ? s : s with { LocalStartedAt = Now, CompletedMilliseconds = 0 }) : Run(async api =>
     {
         inhibitStart = false;
         await Reconcile(api);
@@ -215,7 +248,8 @@ internal sealed class TimerCoordinator
         await api.Start(state.WorkspaceId!, task.Id, request.Marker);
         await Reconcile(api);
     }
-    internal Task Select(TaskSummary task) => Run(async api =>
+    internal Task Select(TaskSummary task) => LocalOnly ? LocalChange(s => s.Selected?.Id == task.Id ? s : s with { Selected = task,
+        LocalStartedAt = s.LocalStartedAt is null ? null : Now, CompletedMilliseconds = 0 }) : Run(async api =>
     {
         await Reconcile(api);
         if (HasPending || Conflict || state.Selected?.Id == task.Id) return;
@@ -233,6 +267,11 @@ internal sealed class TimerCoordinator
     // Called synchronously by lock/sleep/quit handlers so the cutoff is durable before suspension.
     internal void RequestPause()
     {
+        if (LocalOnly)
+        {
+            _ = LocalChange(s => s.LocalStartedAt is long start ? s with { LocalStartedAt = null, CompletedMilliseconds = Math.Max(0, Now - start) } : s);
+            return;
+        }
         inhibitStart = true;
         var cutoff = unsavedPauseAt ?? Now;
         try
@@ -249,6 +288,7 @@ internal sealed class TimerCoordinator
     internal Task Stop()
     {
         RequestPause();
+        if (LocalOnly) return Task.CompletedTask;
         return Run(async api => { await Reconcile(api); await Totals(api); }, wait: true);
     }
     internal Task AcceptRemote() => Run(async api =>

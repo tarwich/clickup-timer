@@ -19,6 +19,8 @@ internal sealed record StartRequest(string Marker, TaskSummary Task, long Reques
 internal sealed record StopRequest(TimeEntry Entry, long RequestedAt, bool Sent = false);
 internal sealed record TimingState
 {
+    public bool LocalOnly { get; init; }
+    public long? LocalStartedAt { get; init; }
     public string? UserId { get; init; }
     public string? WorkspaceId { get; init; }
     public TaskSummary? Selected { get; init; }

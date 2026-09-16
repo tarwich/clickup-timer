@@ -65,7 +65,7 @@ internal sealed class TaskPickerPanel : StackPanel
         var settings = services.Settings;
         try
         {
-            var task = await getTask(row.Task.Id);
+            var task = services.LocalTimerMode ? row.Task : await getTask(row.Task.Id);
             if (settings.UserId != services.Settings.UserId || settings.WorkspaceId != services.Settings.WorkspaceId) return;
             services.SearchCache.Merge(settings.UserId!, settings.WorkspaceId!, [new(task.Id, task.Name, "task", task.ListId, task.Status, task.StatusType)]);
             services.Save(services.Settings with { RecentTasks = TaskCatalog.Remember(services.Settings, task) }); await select(task);

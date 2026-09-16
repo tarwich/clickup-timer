@@ -38,16 +38,12 @@ internal static class McpTimingChecks
                 "Expired MCP authorization preserves the requested stop time and explains reconnect");
             clock.Advance(120); server.Expired = false;
             await timer.RefreshAfterReconnect();
-            check(!timer.IsRunning && timer.HasPending && timer.NeedsReview && server.Current is null && store.LoadTiming().Stopping!.Sent,
-                "Reconnect stops the remote timer and retains a delayed cutoff for explicit correction review");
+            check(!timer.IsRunning && !timer.HasPending && !timer.NeedsReview && server.Current is null,
+                "Delayed MCP Stop accepts the recorded duration without blocking further use");
             var stops = server.Stops;
             timer = NewTimer(); await timer.Refresh();
-            check(timer.NeedsReview && timer.HasPending && server.Stops == stops && store.LoadTiming().Stopping!.RequestedAt == pending.RequestedAt,
-                "Delayed-stop review survives restart without another Stop or a lost cutoff");
-            var entry = server.All[pending.Entry.Id];
-            server.All[entry.Id] = entry with { End = pending.RequestedAt, Duration = pending.RequestedAt - entry.Start };
-            await timer.Refresh();
-            check(!timer.HasPending && !timer.NeedsReview && timer.Elapsed == "00m 07s", "Correcting the time in ClickUp resolves MCP recovery on refresh");
+            check(!timer.NeedsReview && !timer.HasPending && server.Stops == stops,
+                "Restart after delayed Stop does not restore a recovery lock");
 
             server.LoseStart = true; await timer.Start();
             check(timer.HasPending, "Lost MCP Start response retains the durable start marker");

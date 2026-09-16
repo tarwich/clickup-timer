@@ -82,10 +82,10 @@ internal sealed class TimerStrip : Border
         if (next == Footprint) return;
         Footprint = next; FootprintChanged?.Invoke();
     }
-    internal void SetState(string name, string status, bool running, bool pending, bool online, bool review, bool enabled)
+    internal void SetState(string name, string status, bool running, bool pending, bool online, bool review, bool enabled, bool localOnly = false)
     {
         status = StateLabel(status);
-        var key = $"{name}/{status}/{running}/{pending}/{online}/{review}/{enabled}";
+        var key = $"{name}/{status}/{running}/{pending}/{online}/{review}/{enabled}/{localOnly}";
         if (renderedState == key) return;
         renderedState = key;
         task.Text = name; Choose.ToolTip = name;
@@ -95,7 +95,7 @@ internal sealed class TimerStrip : Border
         State.Content = Icon(kind); State.ToolTip = status + " — view details";
         AutomationProperties.SetName(State, status + ". View details and recovery actions");
         Toggle.Content = Icon(running || pending ? "Stop" : "Start");
-        Toggle.ToolTip = running || pending ? "Stop logging to ClickUp" : "Start logging to ClickUp";
+        Toggle.ToolTip = localOnly ? running ? "Stop local timer" : "Start local timer" : running || pending ? "Stop logging to ClickUp" : "Start logging to ClickUp";
         AutomationProperties.SetName(Toggle, (string)Toggle.ToolTip); Toggle.IsEnabled = enabled;
         Appearance.Color(stateText, TextBlock.ForegroundProperty, kind is "Review" or "Pending" or "Offline" ? "Warning" : "Muted");
     }

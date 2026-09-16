@@ -23,7 +23,7 @@ internal sealed class TimerWindow : Window
     private string? displayedTask;
     private bool focusSessionDetails;
     private readonly TextBox details = new() { TextWrapping = TextWrapping.Wrap, IsReadOnly = true, Height = double.NaN, Background = Brushes.Transparent, BorderThickness = new Thickness(0), Padding = new Thickness(0), Margin = new Thickness(0, 4, 0, 8) };
-    private readonly StackPanel recovery = new() { Orientation = Orientation.Horizontal };
+    private readonly WrapPanel recovery = new();
     private readonly Popup picker = new() { StaysOpen = false, AllowsTransparency = true, Placement = PlacementMode.Top };
     private readonly TaskPickerPanel pickerPanel;
     private string? taskScope;
@@ -61,6 +61,8 @@ internal sealed class TimerWindow : Window
         Item("Choose task", OpenPicker); Item("Open task in ClickUp", OpenTask);
         Item("Retry ClickUp connection", () => _ = timer.Refresh());
         Item("Accept ClickUp state…", Review);
+        Item("Use timer without ClickUp (discard recovery)", () => _ = timer.UseLocalTimer());
+        Item("Enable ClickUp logging", () => _ = timer.EnableClickUpLogging());
         Item("Settings", OpenSettings); Item("Reset position", positioning.Reset); Item("Save positioning diagnostics", positioning.SaveDiagnostics); Item("Exit", Close);
         pickerPanel = new TaskPickerPanel(services, () => timer.SelectedTask, async task => { await timer.Select(task); if (timer.SelectedTask?.Id == task.Id) picker.IsOpen = false; UpdateTimer(); }, OpenTask);
         var current = new StackPanel { Margin = new Thickness(12, 8, 12, 0) };
@@ -71,6 +73,15 @@ internal sealed class TimerWindow : Window
         recovery.Children.Add(retry); recovery.Children.Add(review); current.Children.Add(recovery);
         var reconnect = new Button { Content = "Reconnect to ClickUp", Margin = new Thickness(4, 0, 0, 0) };
         reconnect.Click += (_, _) => OpenSettings(); recovery.Children.Add(reconnect);
+        var local = new Button { Content = "Use timer without ClickUp (discard recovery)", Margin = new Thickness(0, 6, 0, 0) };
+        local.Click += async (_, _) =>
+        {
+            local.IsEnabled = false; local.Content = "Switching to local timer…";
+            try { await timer.UseLocalTimer(); }
+            finally { local.IsEnabled = true; local.Content = "Use timer without ClickUp (discard recovery)"; }
+        }; recovery.Children.Add(local);
+        var logging = new Button { Content = "Enable ClickUp logging", Margin = new Thickness(4, 6, 0, 0) };
+        logging.Click += async (_, _) => await timer.EnableClickUpLogging(); recovery.Children.Add(logging);
         var pickerContent = new StackPanel(); pickerContent.Children.Add(current); pickerContent.Children.Add(pickerPanel);
         var frame = new Border { Width = 390, BorderThickness = new Thickness(1), Child = new ScrollViewer { Content = pickerContent, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MaxHeight = 600 } };
         // Popup content has its own visual root. Share the live resource dictionary explicitly.
@@ -85,6 +96,8 @@ internal sealed class TimerWindow : Window
         var trayMenu = new Forms.ContextMenuStrip();
         trayMenu.Items.Add("Choose task", null, (_, _) => Dispatcher.Invoke(OpenPicker));
         trayMenu.Items.Add("Settings", null, (_, _) => Dispatcher.Invoke(OpenSettings));
+        trayMenu.Items.Add("Use timer without ClickUp (discard recovery)", null, (_, _) => Dispatcher.Invoke(() => _ = timer.UseLocalTimer()));
+        trayMenu.Items.Add("Enable ClickUp logging", null, (_, _) => Dispatcher.Invoke(() => _ = timer.EnableClickUpLogging()));
         trayMenu.Items.Add("Reset position", null, (_, _) => Dispatcher.Invoke(positioning.Reset));
         trayMenu.Items.Add("Exit", null, (_, _) => Dispatcher.Invoke(Close));
         tray.ContextMenuStrip = trayMenu; tray.DoubleClick += (_, _) => Dispatcher.Invoke(OpenSettings);
@@ -119,13 +132,15 @@ internal sealed class TimerWindow : Window
     {
         if (displayedTask != timer.SelectedTask?.Id && !timer.IsRunning) strip.ResetDurationWidth();
         displayedTask = timer.SelectedTask?.Id;
-        strip.SetState(timer.SelectedTask?.Name ?? "Choose task", timer.StatusText, timer.IsRunning, timer.HasPending, timer.Online, timer.NeedsReview,
-            timer.CanRequestStop || (!timer.Busy && (timer.SelectedTask is not null || timer.HasPending || timer.IsRunning)));
+        strip.SetState(timer.SelectedTask?.Name ?? "Choose task", timer.StatusText, timer.IsRunning, timer.HasPending, timer.Online || timer.LocalOnly, timer.NeedsReview,
+            timer.CanRequestStop || (!timer.Busy && (timer.LocalOnly || timer.SelectedTask is not null || timer.HasPending || timer.IsRunning)), localOnly: timer.LocalOnly);
         strip.SetTimes(timer.Elapsed, timer.Today);
         details.Text = $"{timer.SelectedTask?.Name ?? "No task selected"}\n{TimerStrip.StateLabel(timer.StatusText)} · {timer.Elapsed}\nToday {timer.Today}" + (timer.Message is { Length: > 0 } message ? "\n" + message : "");
         ToolTip = details.Text;
         recovery.Visibility = timer.HasPending || !timer.Online || timer.NeedsReview ? Visibility.Visible : Visibility.Collapsed;
         recovery.Children[1].Visibility = timer.HasPending || timer.NeedsReview ? Visibility.Visible : Visibility.Collapsed;
+        recovery.Children[3].Visibility = timer.LocalOnly ? Visibility.Collapsed : Visibility.Visible;
+        recovery.Children[4].Visibility = timer.LocalOnly ? Visibility.Visible : Visibility.Collapsed;
     }
     private void UpdateSummary()
     {

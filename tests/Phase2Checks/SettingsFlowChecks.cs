@@ -78,6 +78,10 @@ internal static class SettingsFlowChecks
                     ((ListBox)picker.FindName("Results")).SelectedIndex = 0;
                     ((Button)picker.FindName("UseSelectedTask")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     check(hydrated == 1 && selected?.Id == "t1", "Task selection uses the OAuth task reader without requiring a REST client");
+                    services.LocalTimerMode = true;
+                    ((Button)picker.FindName("UseSelectedTask")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    check(hydrated == 1 && selected?.Id == "t1", "Local mode selects cached tasks without checking expired OAuth");
+                    services.LocalTimerMode = false;
                     draft.Text = "needle"; await Task.Delay(800);
                     check(taskSearch.Calls.Single() is ("w", "needle", "task", null), "Task search covers the workspace without a list filter");
                     check(((ListBox)picker.FindName("Results")).Items.Count == 1, "Server content matches survive local name filtering");
