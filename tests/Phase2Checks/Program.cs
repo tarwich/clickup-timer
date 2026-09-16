@@ -3,6 +3,31 @@ using System.IO;
 using System.Net.Http;
 using ClickUpTimer;
 
+if (args.Contains("--mcp-search-inspect"))
+{
+    using var services = new AppServices();
+    var settings = services.Settings;
+    var queryIndex = Array.IndexOf(args, "--mcp-search-inspect") + 1;
+    var text = queryIndex < args.Length ? args[queryIndex] : settings.RecentTasks.First().Task.Name;
+    Console.WriteLine("Query: " + text);
+    Console.WriteLine("Preferred list: " + settings.PreferredListName);
+    foreach (var list in new string?[] { settings.PreferredListId, null })
+    {
+        string? cursor = null;
+        var seen = new HashSet<string>();
+        do
+        {
+            var page = await services.Search.Search(settings.WorkspaceId!, text, "task", list, cursor, default);
+            Console.WriteLine($"Scope: {list ?? "workspace"}; results: {page.Items.Count}");
+            foreach (var item in page.Items)
+                Console.WriteLine($"{item.Name}: type={item.Type}, list={item.ListId}, status={item.Status}, ignored={TaskCatalog.Ignored(settings, item.Task)}");
+            cursor = page.Cursor;
+            if (cursor is not null && !seen.Add(cursor)) throw new Exception("Repeated search cursor");
+        } while (cursor is not null);
+    }
+    return;
+}
+
 if (args.Contains("--mcp-timer-inspect"))
 {
     using var services = new AppServices();

@@ -20,7 +20,6 @@ internal sealed record AppSettings
     public double FloatingX { get; init; } = 0.05;
     public double FloatingY { get; init; } = 0.85;
     public bool LaunchAtSignIn { get; init; }
-    public bool SearchCurrentList { get; init; } = true;
     public string? UserId { get; init; }
     public string? UserName { get; init; }
     public string? WorkspaceId { get; init; }

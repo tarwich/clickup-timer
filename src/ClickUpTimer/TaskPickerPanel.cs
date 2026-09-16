@@ -1,6 +1,5 @@
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 
 namespace ClickUpTimer;
@@ -17,7 +16,6 @@ internal sealed class TaskPickerPanel : StackPanel
     private readonly TextBox query = new() { Height = 28, Padding = new Thickness(6, 3, 6, 3), MaxLength = 500 };
     private readonly ListBox results = new() { MaxHeight = 250, MinHeight = 65 };
     private readonly TextBlock notice = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 6) };
-    private readonly ToggleButton currentList = new() { Height = 28, Margin = new Thickness(0, 6, 0, 2), HorizontalAlignment = HorizontalAlignment.Left, Padding = new Thickness(8, 3, 8, 3) };
     private readonly Button create = new() { Height = 28 };
     private readonly HashSet<string> remoteMatches = [];
     private string? scope;
@@ -32,19 +30,11 @@ internal sealed class TaskPickerPanel : StackPanel
         this.search = search ?? services.Search;
         NameScope.SetNameScope(this, new NameScope());
         RegisterName("SearchText", query); RegisterName("CreateTask", create); RegisterName("Notice", notice);
-        RegisterName("CurrentList", currentList); RegisterName("Results", results);
+        RegisterName("Results", results);
         Margin = new Thickness(12);
         Children.Add(new TextBlock { Text = "Choose a task", FontSize = 14, FontWeight = FontWeights.SemiBold });
-        Children.Add(currentList); Children.Add(query); Children.Add(notice); Children.Add(results);
-        currentList.SetResourceReference(StyleProperty, "SearchScopeToggle");
-        currentList.ToolTip = "Switch between your current list and the entire workspace. This choice is saved.";
-        currentList.IsChecked = services.Settings.SearchCurrentList;
-        currentList.Click += async (_, _) =>
-        {
-            try { services.Save(services.Settings with { SearchCurrentList = currentList.IsChecked == true }); }
-            catch (Exception) { currentList.IsChecked = services.Settings.SearchCurrentList; notice.Text = "Search scope could not be saved."; return; }
-            await SearchChanged();
-        };
+        Children.Add(new TextBlock { Text = "Search entire workspace", Margin = new Thickness(0, 6, 0, 2) });
+        Children.Add(query); Children.Add(notice); Children.Add(results);
         query.KeyDown += (_, e) =>
         {
             if (e.Key == Key.Down && results.Items.Count > 0) { results.SelectedIndex = Math.Max(0, results.SelectedIndex); results.Focus(); e.Handled = true; }
@@ -93,15 +83,12 @@ internal sealed class TaskPickerPanel : StackPanel
         var settings = services.Settings;
         var nextScope = $"{settings.UserId}/{settings.WorkspaceId}/{settings.PreferredListId}";
         if (scope != nextScope) { interaction.Cancel(); remoteMatches.Clear(); scope = nextScope; searchStatus = ""; }
-        currentList.IsChecked = settings.SearchCurrentList;
-        currentList.Content = settings.SearchCurrentList ? "Current list" : "Entire workspace";
         var items = settings.IsConfigured ? services.SearchCache.Read(settings.UserId!, settings.WorkspaceId!).Where(i => i.Type == "task").Select(i => i.Task).ToList() : [];
         var legacy = settings.IsConfigured ? services.Store.LoadCache(settings.UserId!, settings.WorkspaceId!, settings.PreferredListId!)?.Tasks ?? [] : [];
         var all = items.Concat(legacy).DistinctBy(t => t.Id).ToList();
         var preferred = all.Where(t => t.ListId == settings.PreferredListId).ToList();
-        var filteredSettings = settings.SearchCurrentList ? settings with { RecentTasks = settings.RecentTasks.Where(t => t.Task.ListId == settings.PreferredListId).ToList() } : settings;
         var selected = (results.SelectedItem as TaskRow)?.Task.Id;
-        var rows = TaskCatalog.Filter(filteredSettings, preferred, settings.SearchCurrentList ? [] : all, query.Text, active(), remoteMatches);
+        var rows = TaskCatalog.Filter(settings, preferred, all, query.Text, active(), remoteMatches);
         results.ItemsSource = rows.Take(200).ToList();
         results.SelectedItem = rows.FirstOrDefault(r => r.Task.Id == selected);
         notice.Text = !settings.IsConfigured ? "Connect and choose a list in Settings first."
@@ -109,7 +96,6 @@ internal sealed class TaskPickerPanel : StackPanel
         create.Visibility = string.IsNullOrWhiteSpace(query.Text) ? Visibility.Collapsed : Visibility.Visible;
         create.Content = "Create task in " + (settings.PreferredListName ?? "current list");
         create.IsEnabled = settings.IsConfigured && !creating && !string.IsNullOrWhiteSpace(query.Text);
-        currentList.IsEnabled = !creating;
     }
     private async Task SearchChanged()
     {
@@ -124,10 +110,10 @@ internal sealed class TaskPickerPanel : StackPanel
             var seen = new HashSet<string>();
             do
             {
-                var page = await search.Search(settings.WorkspaceId!, text, "task", settings.SearchCurrentList ? settings.PreferredListId : null, cursor, ct);
+                var page = await search.Search(settings.WorkspaceId!, text, "task", null, cursor, ct);
                 ct.ThrowIfCancellationRequested();
                 services.SearchCache.Merge(settings.UserId!, settings.WorkspaceId!, page.Items);
-                foreach (var item in page.Items.Where(i => i.Type == "task" && (!settings.SearchCurrentList || i.ListId == settings.PreferredListId))) remoteMatches.Add(item.Id);
+                foreach (var item in page.Items.Where(i => i.Type == "task")) remoteMatches.Add(item.Id);
                 cursor = page.Cursor;
                 searchStatus = cursor is null ? "Search complete" : "Searching ClickUp · more results loading…";
                 Refresh();
@@ -157,7 +143,7 @@ internal sealed class TaskPickerPanel : StackPanel
             notice.Text = created is not null ? "Task was created, but recent tasks could not be saved. Search before creating another."
                 : Error(ex) + " Your title is retained. If the connection was lost, check for the task before retrying.";
         }
-        finally { creating = false; query.IsEnabled = true; create.IsEnabled = !string.IsNullOrWhiteSpace(query.Text); currentList.IsEnabled = true; }
+        finally { creating = false; query.IsEnabled = true; create.IsEnabled = !string.IsNullOrWhiteSpace(query.Text); }
     }
     private static string Error(Exception ex) => ex is ClickUpException ? ex.Message : "Could not complete the request. Cached results are still available.";
     internal void Cancel() => interaction.Close();

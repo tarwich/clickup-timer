@@ -73,23 +73,21 @@ internal static class SettingsFlowChecks
                     var picker = new TaskPickerPanel(services, () => null, task => { selected = task; return Task.CompletedTask; }, () => { }, search: taskSearch,
                         getTask: id => { hydrated++; return Task.FromResult(new TaskSummary(id, "Hydrated task", "open", "l")); });
                     var draft = (TextBox)picker.FindName("SearchText");
-                    var toggle = (ToggleButton)picker.FindName("CurrentList");
                     picker.Open(); await Task.Delay(750);
                     check(taskSearch.Calls.Count == 0 && ((ListBox)picker.FindName("Results")).Items.Count == 1, "Opening task picker shows cached tasks and makes no search call");
                     ((ListBox)picker.FindName("Results")).SelectedIndex = 0;
                     ((Button)picker.FindName("UseSelectedTask")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     check(hydrated == 1 && selected?.Id == "t1", "Task selection uses the OAuth task reader without requiring a REST client");
                     draft.Text = "needle"; await Task.Delay(800);
-                    check(taskSearch.Calls.Single() is ("w", "needle", "task", "l"), "Task search defaults to current list");
+                    check(taskSearch.Calls.Single() is ("w", "needle", "task", null), "Task search covers the workspace without a list filter");
                     check(((ListBox)picker.FindName("Results")).Items.Count == 1, "Server content matches survive local name filtering");
-                    toggle.IsChecked = false; toggle.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent)); await Task.Delay(800);
-                    check(taskSearch.Calls.Last() is ("w", "needle", "task", null) && !new SettingsStore(path).Load().SearchCurrentList, "Scope switch searches workspace and persists immediately");
+                    check(((ListBox)picker.FindName("Results")).Items.Cast<TaskRow>().Single().Task.ListId == "other-list", "Remote matches outside the preferred list remain visible");
                     draft.Clear(); await Task.Delay(750);
-                    check(taskSearch.Calls.Count == 2, "Clearing task query makes no search call");
+                    check(taskSearch.Calls.Count == 1, "Clearing task query makes no search call");
                     picker.Cancel(); draft.Text = "closed"; await Task.Delay(750);
-                    check(taskSearch.Calls.Count == 2, "Closed task picker cannot start remote search");
+                    check(taskSearch.Calls.Count == 1, "Closed task picker cannot start remote search");
                     var restored = new TaskPickerPanel(services, () => null, _ => Task.CompletedTask, () => { }, search: taskSearch);
-                    check(((ToggleButton)restored.FindName("CurrentList")).IsChecked == false, "New task picker restores workspace scope");
+                    check(((ListBox)restored.FindName("Results")).Items.Cast<TaskRow>().Any(r => r.Task.ListId == "other-list"), "Reopened picker includes cached tasks from other lists");
                     var attempted = 0;
                     var failure = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                     var failing = new TaskPickerPanel(services, () => null, _ => throw new Exception("Failed creation selected a task"), () => { },
@@ -119,7 +117,7 @@ internal static class SettingsFlowChecks
         {
             ct.ThrowIfCancellationRequested(); Calls.Add((workspace, query, type, list));
             return Task.FromResult(new SearchPage(type == "list" ? [new("found-list", "Operations", "list")]
-                : [new("found-task", "Content matched", "task", "l", "open")]));
+                : [new("found-task", "Content matched", "task", "other-list", "open")]));
         }
     }
     private sealed class DelayedHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> respond) : HttpMessageHandler
